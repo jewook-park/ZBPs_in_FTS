@@ -13,19 +13,17 @@
 #     name: python3
 # ---
 
-# + [markdown] jp-MarkdownHeadingCollapsed=true
 # # SPMpy_introduction
 # * Authors : Dr. Jewook Park, CNMS, ORNL
 #     * Center for Nanophase Materials Sciences (CNMS), Oak Ridge National Laboratory (ORNL)
 #     * email :  parkj1@ornl.gov
-# -
 
 # > **SPMpy** is a collection of Python functions designed to analyze scanning probe microscopy (SPM) data, including scanning tunneling microscopy and spectroscopy (STM/S) and atomic force microscopy (AFM) datasets, which are inherently multidimensional. By leveraging recent advances in image processing, often referred to as computer vision, SPMpy makes use of [building blocks](https://scipy-lectures.org/intro/intro.html#the-scientific-python-ecosystem) and powerful [visualization tools](https://scikit-image.org/) that are readily available within the [scientific python ecosystem](https://lectures.scientific-python.org). Inspired by established SPM data analysis software such as [Wsxm](http://www.wsxm.eu/) and [Gwyddion](http://gwyddion.net/), SPMpy also incorporates insights from [Fundamentals in Data Visualization](https://clauswilke.com/dataviz/).
 # > SPMpy is being developed as an open-source project, led by Jewook Park ([SPMPY](https://github.com/jewook-park/SPMPY)). Contributions, suggestions, and error reports are highly encouraged. Feel free to contact via the GitHub page or [email](mailto:parkj1@ornl.gov). Comments and feedback are welcome in either Korean or English.
 #
 # > SPMpy uses [Xarray](https://docs.xarray.dev/en/stable/#) as its data container. Currently, SPM datasets obtained via the Nanonis Controller ([SPECS](https://www.specs-group.com/nanonis/products/mimea/)) have been integrated for conversion into Xarray, using [nanonispy](https://github.com/underchemist/nanonispy). By utilizing Xarray datasets, SPMpy allows the manipulation of data channels obtained simultaneously while preserving metadata (data headers). Other SPM controller formats can also be analyzed in SPMpy after conversion to Xarray, though this requires specific conversion functions. Additionally, 2D image data analyzed in Gwyddion (*.gwy) can be converted into Xarray for additional analysis.
 #
-# * 2025 0213 update by **Jewook Park**
+# * 2025 0725 update by **Jewook Park**
 #     * for internal review in STM group, CNMS, ORNL 
 
 # # Experiments al Conditions 
@@ -42,122 +40,173 @@
 # >    * check necessary packages  &  import modules
 
 # +
+
 import importlib
 import subprocess
 import sys
 from warnings import warn
 
-# Check if the package is installed
-def is_package_installed(package_name):
+# -------------------------------------------------------------------
+# Utility: Run shell command
+# -------------------------------------------------------------------
+def run_command(cmd: str) -> bool:
+    """
+    Execute a shell command and return whether it succeeded.
+    Prints stdout on success and stderr on failure.
+    """
     try:
-        importlib.import_module(package_name)
+        result = subprocess.run(
+            cmd, shell=True, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True
+        )
+        if result.stdout:
+            print(result.stdout.strip())
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"[Command failed] {cmd}")
+        if e.stderr:
+            print(f"[Error] {e.stderr.strip()}")
+        return False
+
+# -------------------------------------------------------------------
+# 0) Remove legacy JupyterLab widget extension if present
+# -------------------------------------------------------------------
+print("[Step 0] Checking for legacy @jupyter-widgets/jupyterlab-manager extension...")
+listing = subprocess.run(
+    "jupyter labextension list", shell=True,
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+)
+if "@jupyter-widgets/jupyterlab-manager" in listing.stdout:
+    print("[Info] Legacy widget manager found. Uninstalling...")
+    run_command("jupyter labextension uninstall @jupyter-widgets/jupyterlab-manager")
+else:
+    print("[Info] No legacy widget manager detected.")
+
+# -------------------------------------------------------------------
+# 1) Install and build JupyterLab Widgets integration (ipywidgets >=8)
+# -------------------------------------------------------------------
+print("[Step 1] Installing jupyterlab_widgets and rebuilding JupyterLab...")
+# Install official JupyterLab 4+ widget integration
+run_command(f"{sys.executable} -m pip install jupyterlab_widgets")
+# Rebuild JupyterLab to apply the new extension
+run_command("jupyter lab build")
+# Ensure ipywidgets>=8
+run_command(f"{sys.executable} -m pip install ipywidgets>=8")
+print("[Ensured] ipywidgets>=8 installed.")
+
+# -------------------------------------------------------------------
+# 2) Ensure Plotly-JupyterLab integration
+# -------------------------------------------------------------------
+def get_jupyterlab_version() -> int | None:
+    try:
+        output = subprocess.check_output("jupyter lab --version", shell=True, text=True)
+        return int(output.strip().split('.')[0])
+    except Exception:
+        return None
+
+
+def maybe_install_plotly_labextension():
+    version = get_jupyterlab_version()
+    if version is None:
+        warn("Could not detect JupyterLab version; skipping Plotly labextension.")
+        return
+    if version >= 4:
+        print(f"[Skip] JupyterLab {version} detected; prebuilt Plotly renderer available.")
+        return
+
+    ext_pkg = "jupyterlab-plotly-extension"
+    listing = subprocess.run(
+        "jupyter labextension list", shell=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    if ext_pkg in listing.stdout:
+        print(f"[OK] {ext_pkg} already installed.")
+        return
+
+    print(f"[Installing] {ext_pkg} for JupyterLab {version}...")
+    run_command(f"{sys.executable} -m pip install {ext_pkg}")
+    print("[Building] Rebuilding JupyterLab to activate Plotly extension...")
+    run_command("jupyter lab build --dev-build=False --minimize=False")
+
+# -------------------------------------------------------------------
+# 3) Upgrade other lab extensions
+# -------------------------------------------------------------------
+def upgrade_labextensions():
+    print("[Upgrading] panel, holoviews, jupyter-bokeh...")
+    run_command(f"{sys.executable} -m pip install --upgrade panel holoviews jupyter-bokeh")
+    run_command("jupyter labextension list")
+
+# -------------------------------------------------------------------
+# 4) Install and import core Python packages
+# -------------------------------------------------------------------
+from IPython.display import display
+
+def is_package_importable(module_name: str) -> bool:
+    try:
+        importlib.import_module(module_name)
         return True
     except ImportError:
         return False
 
-# Run shell commands
-def run_command(cmd):
-    try:
-        result = subprocess.run(
-            cmd, check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-        )
-        print(result.stdout)
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"Command failed: {cmd}")
-        print(f"Error: {e.stderr}")
-        return False
 
-# Install package via conda or pip
-def install_package(install_name, conda=True):
+def install_package(name: str, conda_prefer: bool = True) -> bool:
     cmds = []
-    
-    # Special handling: tqdm-joblib is not available in the conda channel so use pip only
-    if install_name == 'tqdm-joblib':
-        cmds = [f'{sys.executable} -m pip install tqdm-joblib']
-    elif install_name == 'scikit-image':
+    if name == 'tqdm-joblib':
+        cmds = [f"{sys.executable} -m pip install tqdm-joblib"]
+    elif name == 'scikit-image':
         cmds = [
-            'conda install -y scikit-image -c conda-forge',
-            'python -m pip install -U pip',
-            'python -m pip install -U scikit-image'
+            "conda install -y scikit-image -c conda-forge",
+            f"{sys.executable} -m pip install -U scikit-image"
         ]
-    elif install_name == 'pyqt5':
+    elif name == 'pyqt5':
         cmds = [
-            'conda install -y pyqt -c conda-forge',
-            f'{sys.executable} -m pip install pyqt5'
+            "conda install -y pyqt -c conda-forge",
+            f"{sys.executable} -m pip install pyqt5"
         ]
-    elif install_name == 'seaborn-image':
+    elif name == 'seaborn-image':
         cmds = [
-            f'{sys.executable} -m pip install seaborn-image',
-            f'{sys.executable} -m pip install seaborn-image --no-cache-dir'
+            f"{sys.executable} -m pip install seaborn-image",
+            f"{sys.executable} -m pip install seaborn-image --no-cache-dir"
         ]
-    elif install_name == 'dask':
-        cmds = ['conda install -y dask -c conda-forge']
-    elif install_name == 'joblib':
-        cmds = [f'{sys.executable} -m pip install joblib']
-    elif install_name == 'numba':
-        cmds = [f'{sys.executable} -m pip install numba']
-    elif install_name == 'jupyter_bokeh':
-        cmds = [f'{sys.executable} -m pip install jupyter-bokeh']
-    elif install_name in ['umap-learn', 'scikit-optimize']:
-        cmds = [f'conda install -c conda-forge {install_name}']
-    elif install_name == 'lmfit':
-        cmds = [f'{sys.executable} -m pip install lmfit']
-    # Default installation method using conda or pip
-    elif conda:
+    elif conda_prefer:
         cmds = [
-            f'conda install -y {install_name} -c conda-forge',
-            f'conda install -y {install_name} -c anaconda',
-            f'{sys.executable} -m pip install {install_name}'
+            f"conda install -y {name} -c conda-forge",
+            f"{sys.executable} -m pip install {name}"
         ]
     else:
-        cmds = [f'{sys.executable} -m pip install {install_name}']
-    
-    # Try each installation command
+        cmds = [f"{sys.executable} -m pip install {name}"]
+
     for cmd in cmds:
         if run_command(cmd):
-            print(f"Successfully installed {install_name}")
             return True
-    
-    print(f"All installation attempts for {install_name} failed")
+    print(f"[Failed] Could not install {name}")
     return False
 
-# Try to import the package, optionally assigning an alias
-def import_package(import_name, alias=None):
-    try:
-        module = importlib.import_module(import_name)
-        if alias:
-            globals()[alias] = module
-        return module
-    except ImportError as e:
-        warn(f"Failed to import {import_name}. Error: {str(e)}")
-        return None
 
-# Install and import a package, if not already installed
-def install_and_import(install_name, import_name=None, alias=None):
+def install_and_import(name: str, import_name: str = None, alias: str = None):
     if import_name is None:
-        import_name = install_name
+        import_name = name
+    if is_package_importable(import_name):
+        mod = importlib.import_module(import_name)
+        if alias:
+            globals()[alias] = mod
+        return mod
+    print(f"[Installing] {name}...")
+    if install_package(name):
+        try:
+            mod = importlib.import_module(import_name)
+            if alias:
+                globals()[alias] = mod
+            return mod
+        except ImportError as e:
+            warn(f"Import failed: {import_name} ({e})")
+    return None
 
-    # Check if the package is already installed (using the correct import name)
-    if is_package_installed(import_name):
-        print(f"{import_name} is already installed. Skipping installation.")
-        return import_package(import_name, alias)
-
-    print(f"{import_name} is not installed or failed to import. Installing {install_name}...")
-    if not install_package(install_name):
-        warn(f"Failed to install {install_name}")
-        return None
-
-    return import_package(import_name, alias)
-
-# Packages list updated to use the correct import names:
-# - For tqdm-joblib: import as 'tqdm_joblib'
-# - For seaborn-image: import as 'seaborn_image'
-# - For scikit-optimize: import as 'skopt'
 packages = [
-    ('xarray', 'xr', 'xarray'),
-    ('numpy', 'np', 'numpy'),
-    ('scipy', 'sp', 'scipy'),
+    ('xarray', None, 'xarray'),
+    ('numpy', None, 'numpy'),
+    ('scipy', None, 'scipy'),
     ('seaborn', 'sns', 'seaborn'),
     ('pandas', 'pd', 'pandas'),
     ('scikit-image', 'skimage', 'skimage'),
@@ -166,92 +215,329 @@ packages = [
     ('hvplot', None, 'hvplot'),
     ('plotly', None, 'plotly'),
     ('gwyfile', None, 'gwyfile'),
-    ('tqdm', None, 'tqdm'),
     ('tqdm-joblib', None, 'tqdm_joblib'),
-    # For netcdf4, use the correct import name 'netCDF4'
-    ('netcdf4', None, 'netCDF4'),
+    ('netcdf4', 'netCDF4', 'netCDF4'),
     ('h5netcdf', None, 'h5netcdf'),
     ('python-pptx', 'pptx', 'pptx'),
-    # For pyqt5, use 'PyQt5' for both alias and import name
-    ('pyqt5', 'PyQt5', 'PyQt5'),
+    ('PyQt5', None, 'PyQt5'),
     ('seaborn-image', 'isns', 'seaborn_image'),
     ('joblib', None, 'joblib'),
     ('numba', None, 'numba'),
     ('dask', None, 'dask'),
-    ('jupyter_bokeh', None, 'jupyter_bokeh'),
+    ('jupyter-bokeh', None, 'jupyter_bokeh'),
     ('umap-learn', None, 'umap'),
-    ('scikit-optimize', None, 'skopt'),
+    ('scikit-optimize', 'skopt', 'skopt'),
+    ('anywidget', None, 'anywidget'),
     ('ipywidgets', None, 'ipywidgets'),
     ('lmfit', None, 'lmfit'),
-    ('hyperopt',        None, 'hyperopt'),
-    ('kaleido',       None,      'kaleido')
+    ('hyperopt', None, 'hyperopt'),
+    ('kaleido', None, 'kaleido')
 ]
+for name, alias, module in packages:
+    install_and_import(name, module, alias)
 
-# Install and import each package
-for install_name, alias, import_name in packages:
-    install_and_import(install_name, import_name, alias)
+# -------------------------------------------------------------------
+# 5) Final lab extension upgrade and imports
+# -------------------------------------------------------------------
+maybe_install_plotly_labextension()
+upgrade_labextensions()
 
-# Additional imports and configurations
-try:
-    from pptx import Presentation
-    from pptx.util import Inches, Pt
-    from PyQt5.QtWidgets import QApplication, QFileDialog
-    import matplotlib.patches as patches
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Rectangle
-    import panel as pn
-    from panel.interact import interact
-    from joblib import Parallel, delayed
-    from numba import jit
-    from skimage.transform import resize
-    import panel.widgets as pnw
+# -------------------------------------------------------------------
+# 6) Import analysis libraries and configure
+# -------------------------------------------------------------------
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from PyQt5.QtWidgets import QApplication, QFileDialog
+import matplotlib.patches as patches
+from matplotlib.patches import Rectangle
+import panel as pn
+from panel.interact import interact
+from joblib import Parallel, delayed
+from numba import jit
+from skimage.transform import resize
+import panel.widgets as pnw
 
-    # Load SPMpy functions
-    # from SPMpyDataAnalysisFunctions_2024Aug15 import *
-    # from SPMpyDataAnalysisFunctions_2024Sep5 import *
-    # from SPMpyDataAnalysisFunctionLibrary_2025Feb16 import *
-    #from SPMpyDataAnalysisFunctionLibrary_2025Mar28 import *
-    from SPMpyDataAnalysisFunctionLibrary_2025May31 import *
-    
+from SPMpyDataAnalysisFunctionLibrary_2025May31 import *
+print("[Imported] SPMpyDataAnalysisFunctionLibrary_2025May31.")
 
-    # Set seaborn-image origin
-    import seaborn_image as isns
-    isns.set_image(origin='lower')
+import seaborn_image as isns
+isns.set_image(origin='lower')
+print("[Config] seaborn-image origin set to 'lower'.")
 
-    print("All packages have been successfully imported.")
-except ImportError as e:
-    print(f"Error during additional imports: {str(e)}")
-
-# Configure Bokeh for inline plotting
 from bokeh.io import output_notebook
 output_notebook()
-
-# Activate holoviews with bokeh backend
 import holoviews as hv
 hv.extension('bokeh')
+print("[Config] Bokeh and HoloViews activated.")
 
-# Ensure ipywidgets version 8 or higher is installed
-run_command('pip install ipywidgets>=8')
-print("ipywidgets version updated if necessary.")
+#print("Environment setup complete. Please restart the JupyterLab kernel to apply changes.")
 
-# Upgrade Panel and Holoviews to the latest versions that include prebuilt labextensions.
-def upgrade_prebuilt_labextensions():
+
+
+# +
+import importlib
+import subprocess
+import sys
+from warnings import warn
+
+def run_command(cmd: str) -> bool:
     """
-    Upgrade Panel and Holoviews to the latest versions that include
-    prebuilt JupyterLab extensions. This avoids the need for manual labextension installation.
+    Execute a shell command and return whether it succeeded.
+
+    Parameters
+    ----------
+    cmd : str
+        The shell command to execute.
+
+    Returns
+    -------
+    bool
+        True if the command exits with status 0, False otherwise.
     """
+    full_cmd = cmd if cmd.startswith(sys.executable) else f"{sys.executable} -m {cmd}"
     try:
         result = subprocess.run(
-            f"{sys.executable} -m pip install --upgrade panel holoviews",
-            check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            full_cmd, shell=True, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True
         )
-        print(result.stdout)
-        print("Successfully upgraded Panel and Holoviews with prebuilt labextensions.")
+        if result.stdout:
+            print(result.stdout.strip())
+        return True
     except subprocess.CalledProcessError as e:
-        print("Failed to upgrade Panel and Holoviews:")
-        print(e.stderr)
+        print(f"[Command failed] {full_cmd}")
+        if e.stderr:
+            print(f"[Error] {e.stderr.strip()}")
+        return False
 
-upgrade_prebuilt_labextensions()
+def is_package_importable(module_name: str) -> bool:
+    """
+    Check whether a Python module can be imported without error.
+    """
+    try:
+        importlib.import_module(module_name)
+        return True
+    except ImportError:
+        return False
+
+def install_package(name: str, conda_prefer: bool = True) -> bool:
+    """
+    Install a package via conda (preferred) or pip fallback.
+    """
+    cmds = []
+    if conda_prefer:
+        cmds = [
+            f"conda install -y {name} -c conda-forge",
+            f"{sys.executable} -m pip install {name}"
+        ]
+    else:
+        cmds = [f"{sys.executable} -m pip install {name}"]
+
+    for cmd in cmds:
+        if run_command(cmd):
+            print(f"[Installed] {name}")
+            return True
+    print(f"[Failed] Could not install {name}")
+    return False
+
+def install_and_import(name: str, import_name: str | None = None, alias: str | None = None):
+    """
+    Ensure a package is installed and importable; install if missing.
+    """
+    if import_name is None:
+        import_name = name
+
+    if is_package_importable(import_name):
+        module = importlib.import_module(import_name)
+        if alias:
+            globals()[alias] = module
+        print(f"[OK] {import_name} already available.")
+        return module
+
+    print(f"[Installing] {name}...")
+    if install_package(name):
+        try:
+            module = importlib.import_module(import_name)
+            if alias:
+                globals()[alias] = module
+            print(f"[Imported] {import_name} after installation.")
+            return module
+        except ImportError as e:
+            warn(f"Import failed: {import_name} ({e})")
+    return None
+
+def get_jupyterlab_version() -> int | None:
+    """
+    Retrieve the major version number of JupyterLab.
+    """
+    try:
+        output = subprocess.check_output(
+            f"{sys.executable} -m jupyter lab --version",
+            shell=True, text=True
+        )
+        return int(output.strip().split('.')[0])
+    except Exception:
+        return None
+
+def maybe_install_plotly_labextension():
+    """
+    Conditionally install Plotly integration based on JupyterLab version.
+    """
+    version = get_jupyterlab_version()
+    if version is None:
+        warn("Could not detect JupyterLab version; skipping Plotly integration.")
+        return
+
+    if version >= 4:
+        print(f"[Skip] JupyterLab {version} detected; prebuilt Plotly renderer available.")
+        return
+
+    if version >= 3:
+        print(f"[Info] JupyterLab {version} detected; installing widget integration only.")
+        run_command("pip install jupyterlab_widgets")
+        return
+
+    # JupyterLab <3
+    ext_pkg = "jupyterlab-plotly"
+    print(f"[Installing] {ext_pkg} for JupyterLab {version}...")
+    run_command(f"{sys.executable} -m jupyter labextension install {ext_pkg}")
+    run_command("jupyter lab build")
+
+def upgrade_labextensions():
+    """
+    Upgrade Panel, HoloViews, and jupyter-bokeh extensions.
+    """
+    print("[Upgrading] panel, holoviews, jupyter-bokeh...")
+    run_command("pip install --upgrade panel holoviews jupyter-bokeh")
+    run_command(f"{sys.executable} -m jupyter labextension list")
+
+# -------------------------------------------------------------------
+# Install and import core Python packages
+# -------------------------------------------------------------------
+packages = [
+    ('xarray',        'xarray',       'xarray'),
+    ('numpy',         'np',           'numpy'),
+    ('scipy',         None,           'scipy'),
+    ('seaborn',       'sns',          'seaborn'),
+    ('pandas',        'pd',           'pandas'),
+    ('scikit-image',  'skimage',      'skimage'),
+    ('xrft',          None,           'xrft'),
+    ('holoviews',     'hv',           'holoviews'),
+    ('hvplot',        None,           'hvplot'),
+    ('plotly',        None,           'plotly'),
+    ('gwyfile',       None,           'gwyfile'),
+    ('tqdm-joblib',   None,           'tqdm_joblib'),
+    ('netcdf4',       'netCDF4',      'netCDF4'),
+    ('h5netcdf',      None,           'h5netcdf'),
+    ('python-pptx',   'pptx',         'pptx'),
+    ('PyQt5',         None,           'PyQt5'),
+    ('seaborn-image', 'isns',         'seaborn_image'),
+    ('joblib',        None,           'joblib'),
+    ('numba',         None,           'numba'),
+    ('dask',          None,           'dask'),
+    ('jupyter-bokeh', None,           'jupyter_bokeh'),
+    ('umap-learn',    None,           'umap'),
+    ('scikit-optimize','skopt',       'skopt'),
+    ('anywidget',     None,           'anywidget'),
+    ('ipywidgets',    None,           'ipywidgets'),
+    ('lmfit',         None,           'lmfit'),
+    ('hyperopt',      None,           'hyperopt'),
+    ('kaleido',       None,           'kaleido')
+]
+
+for name, alias, module in packages:
+    install_and_import(name, module, alias)
+
+# -------------------------------------------------------------------
+# Ensure Plotly-JupyterLab integration
+# -------------------------------------------------------------------
+maybe_install_plotly_labextension()
+
+# -------------------------------------------------------------------
+# Enforce ipywidgets>=8
+# -------------------------------------------------------------------
+run_command(f"{sys.executable} -m pip install ipywidgets>=8")
+print("[Ensured] ipywidgets>=8 installed.")
+
+# -------------------------------------------------------------------
+# Upgrade panel, holoviews, jupyter-bokeh extensions
+# -------------------------------------------------------------------
+upgrade_labextensions()
+
+# -------------------------------------------------------------------
+# Import additional analysis libraries
+# -------------------------------------------------------------------
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from PyQt5.QtWidgets import QApplication, QFileDialog
+import matplotlib.patches as patches
+from matplotlib.patches import Rectangle
+import panel as pn
+from panel.interact import interact
+from joblib import Parallel, delayed
+from numba import jit
+from skimage.transform import resize
+import panel.widgets as pnw
+
+# Import SPMpy analysis functions
+from SPMpyDataAnalysisFunctionLibrary_2025May31 import *
+print("[Imported] SPMpyDataAnalysisFunctionLibrary_2025May31.")
+
+# -------------------------------------------------------------------
+# Configure seaborn-image and HoloViews/Bokeh integration
+# -------------------------------------------------------------------
+import seaborn_image as isns
+isns.set_image(origin='lower')
+print("[Config] seaborn-image origin set to 'lower'.")
+
+from bokeh.io import output_notebook
+output_notebook()
+import holoviews as hv
+hv.extension('bokeh')
+print("[Config] Bokeh and HoloViews activated.")
+
+print("Environment setup complete. Please restart the JupyterLab kernel to apply changes.")
+
+
+# +
+import subprocess
+import sys
+
+# 1) Utility to run shell commands
+def run_command(cmd: str) -> bool:
+    """
+    Run a shell command via Python and return success status.
+    """
+    full_cmd = cmd if cmd.startswith(sys.executable) else f"{sys.executable} -m {cmd}"
+    try:
+        subprocess.run(
+            full_cmd, shell=True, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"[Error] {e.stderr.strip()}")
+        return False
+
+# 2) Uninstall legacy widget manager if present
+listing = subprocess.run(
+    f"{sys.executable} -m jupyter labextension list",
+    shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+).stdout
+
+if "@jupyter-widgets/jupyterlab-manager" in listing:
+    print("Uninstalling legacy widget manager...")
+    run_command("jupyter labextension uninstall @jupyter-widgets/jupyterlab-manager")
+else:
+    print("No legacy widget manager found.")
+
+# 3) Ensure prebuilt widgets for Lab ≥3
+run_command("pip install --upgrade jupyterlab_widgets jupyterlab-plotly ipywidgets>=8")
+
+# 4) Rebuild JupyterLab assets
+run_command("jupyter lab build")
+
+print("✔ Legacy cleanup and rebuild complete.")
 
 # -
 
@@ -264,7 +550,7 @@ upgrade_prebuilt_labextensions()
 # #### INSTALL Revised Nanonispy 
 # * original nanonispy is not updated from 2021--> forked and updated by Jewook
 #     * changing ```np.float``` to ```float```
-#     * #!pip install /Users/gkp/Documents/GitHub/nanonispy
+#     * #!pip install /Users/<username>/Documents/GitHub/nanonispy
 
 # +
 import os
@@ -282,9 +568,9 @@ def install_and_import_nanonispy():
         
         # Define possible installation paths
         paths_to_try = [
-            r'C:\Users\gkp\Documents\GitHub\nanonispy',
+            os.path.expanduser(r'~\Documents\GitHub\nanonispy'),
             r'C:\temp\nanonispy',
-            r'/Users/gkp/Documents/GitHub/nanonispy'
+            os.path.expanduser('~/Documents/GitHub/nanonispy')
         ]
         
         installed = False
@@ -308,7 +594,78 @@ def install_and_import_nanonispy():
 install_and_import_nanonispy()
 
 # -
+# ### install Seaborn Image seperately. 
+# * Jewook fork the git --> github desktop --> local folder  --> install. higher version 
+#
+# * lower version seaborn image --> matlab error 
+#
 
+# +
+# Cell: Upgrade matplotlib-scalebar, apply monkeypatch, and reinstall seaborn-image fork
+import subprocess
+import sys
+import importlib
+import matplotlib as mpl
+import os
+
+# 1) Upgrade matplotlib-scalebar to ensure compatibility with seaborn-image
+#    We install the latest version to obtain fixes for the internal _all_deprecated reference.
+subprocess.run(
+    [sys.executable, "-m", "pip", "install", "--upgrade", "matplotlib-scalebar"],
+    check=True
+)
+import matplotlib_scalebar as mbs
+print("matplotlib-scalebar version:", mbs.__version__)
+
+# 2) Apply runtime monkeypatch for matplotlib._all_deprecated
+#    Some versions of matplotlib-scalebar expect this attribute to exist.
+if not hasattr(mpl, "_all_deprecated"):
+    mpl._all_deprecated = set()
+    print("Applied monkeypatch: mpl._all_deprecated created as empty set")
+else:
+    print("Monkeypatch skipped: mpl._all_deprecated already exists")
+
+# 3) Determine if seaborn-image fork needs installation
+#    Only if the installed version is missing or older than 0.10.0.
+need_install = False
+try:
+    import seaborn_image as existing_isns
+    installed_version = existing_isns.__version__
+    print(f"Current seaborn-image version: {installed_version}")
+    if installed_version < "0.10.0":
+        print(f"seaborn-image version {installed_version} < 0.10.0; scheduling reinstall.")
+        need_install = True
+    else:
+        print(f"seaborn-image is already up-to-date ({installed_version}); skipping reinstall.")
+except ImportError:
+    print("seaborn-image is not installed; scheduling fork installation.")
+    need_install = True
+
+if need_install:
+    # 4) Uninstall existing seaborn-image if present
+    subprocess.run(
+        [sys.executable, "-m", "pip", "uninstall", "-y", "seaborn-image"],
+        check=False
+    )
+    print("Uninstalled existing seaborn-image (if present)")
+
+    # 5) Reinstall seaborn-image from local fork, ignoring Python version constraints
+    local_path = os.path.expanduser(r"~\Documents\GitHub\seaborn-image")
+    if not os.path.isdir(local_path):
+        raise FileNotFoundError(f"Local seaborn-image fork not found at: {local_path}")
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "--ignore-requires-python", local_path],
+        check=True
+    )
+    print("Reinstalled seaborn-image fork from local path")
+
+    # 6) Verify final import and version
+    isns = importlib.reload(importlib.import_module("seaborn_image"))
+    print("seaborn-image version:", isns.__version__)
+else:
+    print("No installation action required.")
+
+# -
 
 # ##### memory usage checkup 
 #
@@ -342,118 +699,152 @@ else:
 #
 
 # +
+# #!/usr/bin/env python3
+
+import argparse
 import platform
 import sys
 import subprocess
 
-def get_os_type():
-    os_name = platform.system()
-    if os_name == "Darwin":
-        return "Mac"
-    elif os_name == "Windows":
-        return "Windows"
-    else:
-        return "Unsupported OS"
 
-def check_package_installed(package_name):
+def get_os_type():
+    """
+    Detect the operating system.
+    Returns:
+        str: "Mac", "Windows", or "Unsupported OS"
+    """
+    name = platform.system()
+    if name == "Darwin":
+        return "Mac"
+    if name == "Windows":
+        return "Windows"
+    return "Unsupported OS"
+
+
+def check_package_installed(pkg_name):
+    """
+    Return True if the Python module can be imported.
+    """
     try:
-        __import__(package_name)
+        __import__(pkg_name)
         return True
-    except ImportError:
+    except Exception:
         return False
 
-def check_python_env(os_type):
-    print(f"Operating System: {os_type}\n")
 
+def get_module_version(mod_name):
+    """
+    Return the __version__ attribute of a module, or None if unavailable.
+    """
+    try:
+        mod = __import__(mod_name)
+        return getattr(mod, '__version__', 'unknown')
+    except Exception:
+        return None
+
+
+def print_environment(os_type):
+    """
+    Print OS, Python, conda status, and key module imports.
+    """
+    print(f"Operating System: {os_type}\n")
     if os_type == "Mac":
         print(f"macOS Version: {platform.mac_ver()[0]}")
     elif os_type == "Windows":
         print(f"Windows Version: {platform.version()}")
 
-    print(f"Python Version: {sys.version}")
-    conda_env = 'conda' in sys.version or 'Continuum' in sys.version
-    print(f"Conda Environment: {'Yes' if conda_env else 'No'}")
+    print(f"Python Version: {sys.version.split()[0]}")
+    conda_env = any(term in sys.version for term in ("conda", "Continuum"))
+    print(f"Conda Environment: {'Yes' if conda_env else 'No'}\n")
 
-    packages = ["torch", "sklearn", "umap", "hdbscan"]
-    for pkg in packages:
-        installed = check_package_installed(pkg)
-        print(f"{pkg}: {'Installed' if installed else 'Not Installed'}")
+    for mod in ("torch", "torchvision", "sklearn", "umap", "hdbscan"):
+        status = "Installed" if check_package_installed(mod) else "Not Installed"
+        version = get_module_version(mod) or "N/A"
+        print(f"{mod:12s}: {status:12s} (version: {version})")
 
     if os_type == "Mac" and check_package_installed("torch"):
         try:
             import torch
-            mps_available = torch.backends.mps.is_available()
-            print(f"PyTorch MPS (Metal Performance Shaders) Support: {'Available' if mps_available else 'Not Available'}")
-        except ImportError:
-            print("PyTorch is not installed, so MPS support cannot be checked.")
+            print(f"PyTorch MPS Support: {'Available' if torch.backends.mps.is_available() else 'Not Available'}")
+        except Exception:
+            print("Unable to check PyTorch MPS support.")
 
-    if conda_env:
-        print("\nConda Installed Channels:")
+    if any(term in sys.version for term in ("conda", "Continuum")):
+        print("\nConda Channels:")
         try:
             subprocess.run(["conda", "config", "--show-sources"], check=True)
-        except FileNotFoundError:
-            print("Conda not found in the system path.")
+        except Exception:
+            print("Failed to retrieve conda channels.")
 
-def install_packages(os_type):
+
+def can_find_torchvision_build(torch_version_base):
+    """
+    Check if a matching torchvision build exists in the PyTorch channel.
+    torch_version_base example: '2.7.1'
+    """
+    try:
+        result = subprocess.run(
+            ["conda", "search", f"torchvision=={torch_version_base}*", "-c", "pytorch"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL
+        )
+        output = result.stdout.decode("utf-8", errors="ignore")
+        return "torchvision " in output
+    except Exception:
+        return False
+
+
+def install_packages(os_type, force_reinstall=False):
+    """
+    Install or reinstall packages via conda (and pip fallback for torchvision).
+    Always upgrade torch and torchvision to latest.
+    """
     if os_type == "Unsupported OS":
-        print("Unsupported OS detected. Exiting installation.")
+        print("Unsupported OS. Installation aborted.")
         return
 
-    def install_conda_package(pkg_list, channel="conda-forge"):
+    def run_conda(pkgs, channel):
         try:
-            subprocess.run(["conda", "install", "-y"] + pkg_list + ["-c", channel], check=True)
-        except Exception as e:
-            print(f"Failed to install {pkg_list}: {e}")
+            subprocess.run(["conda", "install", "-y"] + pkgs + ["-c", channel], check=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Error installing {pkgs} via conda: {e}")
+            return False
 
-    # PyTorch
-    if not check_package_installed("torch"):
-        print("\nInstalling PyTorch...")
-        if os_type == "Mac":
-            install_conda_package(["pytorch", "torchvision", "torchaudio"], channel="pytorch")
-        elif os_type == "Windows":
-            install_conda_package(["pytorch", "torchvision", "torchaudio"], channel="pytorch")
-        print("PyTorch installation attempted.")
-    else:
-        print("PyTorch already installed.")
+    # Always upgrade torch and torchvision
+    print("\nUpgrading to latest torch and torchvision...")
+    run_conda(["pytorch", "torchvision"], channel="pytorch")
 
-    # scikit-learn
-    if not check_package_installed("sklearn"):
-        print("\nInstalling scikit-learn...")
-        install_conda_package(["scikit-learn"])
-    else:
-        print("scikit-learn already installed.")
+    # extras installation
+    extras = [("sklearn", ["scikit-learn"]), ("umap", ["umap-learn"]), ("hdbscan", ["hdbscan"])]
+    for mod, pkg_list in extras:
+        if force_reinstall or not check_package_installed(mod):
+            print(f"\nInstalling {mod}...")
+            run_conda(pkg_list, channel="conda-forge")
+        else:
+            print(f"{mod} already installed; skipping.")
 
-    # umap-learn
-    if not check_package_installed("umap"):
-        print("\nInstalling umap-learn...")
-        install_conda_package(["umap-learn"])
-    else:
-        print("umap-learn already installed.")
+    print("\nFinal environment summary:\n")
+    print_environment(os_type)
 
-    # hdbscan
-    if not check_package_installed("hdbscan"):
-        print("\nInstalling hdbscan...")
-        install_conda_package(["hdbscan"])
-    else:
-        print("hdbscan already installed.")
 
-    print("\nRechecking environment after installations...\n")
-    check_python_env(os_type)
-
-if __name__ == "__main__":
+def main():
     os_type = get_os_type()
-
     if os_type == "Unsupported OS":
-        print("This script supports only macOS and Windows. Exiting.")
+        print("Only macOS and Windows are supported.")
         sys.exit(1)
 
-    print("Step 1: Checking Python environment...\n")
-    check_python_env(os_type)
+    print("Step 1: Checking environment...\n")
+    print_environment(os_type)
+    print("\nStep 2: Installing packages...\n")
+    # force_reinstall can be toggled by setting FORCE_REINSTALL env var
+    force_flag = bool(sys.argv.count('--force'))
+    install_packages(os_type, force_reinstall=force_flag)
+    print("\nProcess complete.")
 
-    print("\nStep 2: Installing required packages (if missing)...\n")
-    install_packages(os_type)
+if __name__ == "__main__":
+    main()
 
-    print("\n✅ All checks and installations complete!")
 
 
 # +
@@ -990,8 +1381,10 @@ GS_topo_2T_003
 
 # # Figure S1 Comparison 0T_002 & 2T_005
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Figure SI _ high resolution topography 
 #
+# -
 
 
 
@@ -1084,6 +1477,7 @@ FTS_0T_2023_0506_0001_xr
 
 
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ## loading gwy files in folder  & convert to xr
 # * transfer to dataframe ==> xrray
 
@@ -2133,6 +2527,11 @@ fig= compare_cropped_large_and_small_area_v2(
     scalebar_length_nm=20,scalebar_colors=('gray', 'white', 'white')
 )
 
+fig_overlay =  fig
+
+fig_overlay.savefig('fig_overlay.png',dpi=600)
+fig_overlay.savefig('fig_overlay.svg')
+
 # +
 import matplotlib.pyplot as plt
 import numpy as np
@@ -2149,7 +2548,7 @@ def compare_cropped_large_and_small_area_v2(cropped_large_area, small_area, perc
     def get_vmin_vmax(data, perc):
         return np.percentile(data.values.flatten(), perc)
 
-    # 데이터 선택
+    # Select data
     if 'bias_mV' in cropped_large_area[channel].dims:
         large_data = cropped_large_area[channel].sel(bias_mV=bias_mV_ref)
         small_data = small_area[channel].sel(bias_mV=bias_mV_ref)
@@ -2157,28 +2556,28 @@ def compare_cropped_large_and_small_area_v2(cropped_large_area, small_area, perc
         large_data = cropped_large_area[channel]
         small_data = small_area[channel]
 
-    # 단위 변환: V/A → nS
+    # Unit conversion: V/A -> nS
     large_data_nS = large_data * 1e9
     small_data_nS = small_data * 1e9
 
-    # 색상 범위
+    # Color range
     vmin_large, vmax_large = get_vmin_vmax(large_data_nS, perc)
     vmin_small, vmax_small = get_vmin_vmax(small_data_nS, perc)
     vmin_combined = min(vmin_large, vmin_small)
     vmax_combined = max(vmax_large, vmax_small)
 
-    # 공통 extent
+    # Shared extent
     extent = [
         float(large_data.coords['X'].min()), float(large_data.coords['X'].max()),
         float(large_data.coords['Y'].min()), float(large_data.coords['Y'].max())
     ]
 
-    # Figure 및 layout 정의
+    # Define figure and layout
     fig, axs = plt.subplots(1, 3, figsize=(12, 4), 
                             gridspec_kw={'width_ratios': [1, 1, 1]},
                             constrained_layout=True)
 
-    # Scale bar 추가 함수
+    # Function to add a scale bar
     def add_scalebar(ax, data, length_nm=20, color='white'):
         x_len = float(data.coords['X'].max() - data.coords['X'].min())
         bar_x_start = float(data.coords['X'].min()) + 0.05 * x_len
@@ -2230,18 +2629,24 @@ def compare_cropped_large_and_small_area_v2(cropped_large_area, small_area, perc
 
 
 
-# -
 
+# +
 fig= compare_cropped_large_and_small_area_v2(
     cropped_large_area=updated_GS_LDOS_0T002_N_2T003,
     small_area=GS_LDOS_2T_003,
     channel='LDOS',
     cmap_large='Blues',
     cmap_small='viridis',
-    alpha_large=0.7,
-    alpha_small=0.4,
+    alpha_large=1,
+    alpha_small=0.5,
     scalebar_length_nm=20,scalebar_colors=('gray', 'white', 'white')
 )
+
+
+fig.savefig('same area_comparison.svg')
+fig.savefig('same area_comparison.png', dpi =600)
+
+# -
 
 
 
@@ -2264,9 +2669,7 @@ compare_cropped_large_and_small_area(updated_GS_LDOS_0T002_N_2T003,
 
 grid_data_dim_slicing(GS_LDOS_2T_003)
 
-# + [markdown] jp-MarkdownHeadingCollapsed=true
 # #### topo comparison again after drift compensation
-# -
 
 merge_topo_0T002_N_2T003 =  merge_multiple_2Ddatasets( [updated_GS_topo_0T002_N_2T003, GS_topo_2T_003], 
                                                                     dataset_names= ['updated_GS_topo_0T002_N_2T003','GS_topo_2T_003'], channel_name='topography',interpolation= True,    attrs_check=False,)
@@ -2304,188 +2707,10 @@ updated_GS_LDOS_0T002_N_2T003
 
 # ### select  line start & end points
 
-# +
-import numpy as np
-import xarray as xr
-import skimage.draw
-import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
-
-def plot_LDOS_map_and_profile(dataset, selected_points, ch='LDOS_smoothed', bias_mV_ref=0,
-                              LDOS_cmap='viridis', line_cmap='gnuplot', perc=(0, 98)):
-    """
-    Plots three figures:
-    1. An LDOS map for the specified channel with the line profile overlay.
-    2. A 2D image of the LDOS line profile with bias (mV) on the x-axis and actual distance (nm) on the y-axis.
-    3. A plot of the interpolated LDOS line profile at the specified bias (mV) with distance (nm) on the x-axis.
-
-    Parameters:
-    - dataset (xr.Dataset): The xarray dataset containing LDOS data.
-    - selected_points (list of tuples): Two points given as real X, Y coordinates.
-    - ch (str): The channel name in the dataset to use for mapping and profiling.
-    - bias_mV_ref (int or float): The bias (mV) value at which to extract the interpolated profile.
-    - LDOS_cmap (str): The colormap for the LDOS images.
-    - line_cmap (str): The colormap for the gradient line connecting the selected points.
-    - perc (tuple): Percentile range for image filtering.
-
-    Returns:
-    - fig (matplotlib.figure.Figure): The figure containing the plots.
-    - interpolated_ds (xr.Dataset): The xarray dataset containing the interpolated LDOS line profile.
-    """
-
-    # If the bias_mV coordinates are in descending order, sort them in ascending order
-    # to ensure the x-axis is displayed correctly.
-    if dataset['bias_mV'].values[0] > dataset['bias_mV'].values[-1]:
-        dataset = dataset.sortby('bias_mV')
-
-    # Select the specified channel from the dataset.
-    ldos_array = dataset[ch]
-
-    # Convert the given start and end points into indices (order: Y, X).
-    start_point = selected_points[0]
-    end_point   = selected_points[1]
-    start_point_index = (
-        np.abs(ldos_array.Y.values - start_point[1]).argmin(),
-        np.abs(ldos_array.X.values - start_point[0]).argmin()
-    )
-    end_point_index = (
-        np.abs(ldos_array.Y.values - end_point[1]).argmin(),
-        np.abs(ldos_array.X.values - end_point[0]).argmin()
-    )
-
-    # Generate an anti-aliased line between the two points.
-    rr, cc, val = skimage.draw.line_aa(
-        start_point_index[0], start_point_index[1],
-        end_point_index[0],   end_point_index[1]
-    )
-
-    # Filter out indices that fall out of bounds.
-    valid_indices = (
-        (rr >= 0) & (rr < ldos_array.sizes['Y']) &
-        (cc >= 0) & (cc < ldos_array.sizes['X'])
-    )
-    rr = rr[valid_indices]
-    cc = cc[valid_indices]
-    val = val[valid_indices]
-
-    # Raise an error if no valid data points were generated.
-    if len(rr) == 0 or len(cc) == 0:
-        raise ValueError(
-            "No valid data points generated from the selected points. "
-            "Please check the input points."
-        )
-
-    # Interpolate the line profile: for each bias_mV slice, compute a weighted sum.
-    ldos_interpolated = []
-    for i in range(ldos_array.sizes['bias_mV']):
-        ldos_slice = ldos_array.isel(bias_mV=i).values
-        profile = np.sum(ldos_slice[rr, cc] * val[:, np.newaxis], axis=0)
-        ldos_interpolated.append(profile)
-    ldos_interpolated = np.array(ldos_interpolated).T  # Transpose to shape (distance, bias_mV)
-
-    # --- 변경된 거리 계산: 시작점↔끝점 전체 길이를 기준으로 비율 분할 ---
-    # start and end coordinates (m)
-    x0 = dataset['X'].values[start_point_index[1]]
-    y0 = dataset['Y'].values[start_point_index[0]]
-    x1 = dataset['X'].values[end_point_index[1]]
-    y1 = dataset['Y'].values[end_point_index[0]]
-    total_dist_m = np.sqrt((x1 - x0)**2 + (y1 - y0)**2)
-
-    num_pts = len(rr)
-    # 전체 거리만큼 0→total 거리로 균등 분할하여 각 포인트 위치 결정 (nm 단위)
-    actual_distance = np.linspace(0, total_dist_m * 1e9, num_pts)
-
-    # Convert the interpolation result to an xarray Dataset.
-    interpolated_ds = xr.Dataset(
-        {
-            "LDOS_interpolated": (["distance", "bias_mV"], ldos_interpolated)
-        },
-        coords={
-            "bias_mV":  ldos_array.bias_mV,
-            "distance": actual_distance
-        }
-    )
-
-    # Extract the interpolated profile at the specified bias_mV value.
-    interpolated_profile = interpolated_ds.sel(
-        bias_mV=bias_mV_ref, method='nearest'
-    ).LDOS_interpolated.values
-
-    # Create a figure with three subplots.
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 5))
-
-    # First subplot: LDOS map with the line profile overlay.
-    ldos_min, ldos_max = np.nanpercentile(
-        dataset.sel(bias_mV=bias_mV_ref, method='nearest')[ch].values,
-        perc
-    )
-    dataset.sel(bias_mV=bias_mV_ref, method='nearest')[ch] \
-           .plot(ax=ax1, cmap=LDOS_cmap, robust=True,
-                 vmin=ldos_min, vmax=ldos_max)
-
-    cmap_instance = plt.get_cmap(line_cmap)
-    colors = cmap_instance(np.linspace(0, 1, num_pts))
-    x_vals = np.linspace(start_point[0], end_point[0], num_pts)
-    y_vals = np.linspace(start_point[1], end_point[1], num_pts)
-
-    # Draw the gradient line connecting the selected points.
-    for i in range(num_pts - 1):
-        ax1.plot(x_vals[i:i+2], y_vals[i:i+2],
-                 color=colors[i], lw=3, alpha=0.5)
-
-    ax1.set_aspect('equal')
-    ax1.set_title(f"LDOS Map with Line Profile\n(bias_mV={bias_mV_ref})")
-    ax1.xaxis.set_major_formatter(
-        FuncFormatter(lambda x, pos: f"{int(x*1e9)}")
-    )
-    ax1.yaxis.set_major_formatter(
-        FuncFormatter(lambda y, pos: f"{int(y*1e9)}")
-    )
-    ax1.set_xlabel("X (nm)")
-    ax1.set_ylabel("Y (nm)")
-
-    # Second subplot: LDOS line profile as a 2D image.
-    flipped = np.flipud(interpolated_ds.LDOS_interpolated.values)
-    bias_min, bias_max = (
-        interpolated_ds.bias_mV.min().item(),
-        interpolated_ds.bias_mV.max().item()
-    )
-    im2 = ax2.imshow(
-        flipped, aspect='auto', cmap=LDOS_cmap, origin='upper',
-        extent=[bias_min, bias_max, 0, actual_distance[-1]],
-        vmin=np.nanpercentile(flipped, perc[0]),
-        vmax=np.nanpercentile(flipped, perc[1])
-    )
-    plt.colorbar(im2, ax=ax2, label='LDOS')
-
-    for i in range(num_pts):
-        ax2.plot(bias_max + 0.1, actual_distance[i],
-                 'o', color=colors[i], markersize=4)
-
-    ax2.set_xlabel("Bias (mV)")
-    ax2.set_ylabel("Distance (nm)")
-    ax2.yaxis.set_major_formatter(
-        FuncFormatter(lambda y, pos: f"{int(y)}")
-    )
-    ax2.set_title("LDOS Line Profile")
-
-    # Third subplot: Interpolated LDOS line profile.
-    ax3.plot(actual_distance, interpolated_profile, color="blue", linestyle="-")
-    ax3.set_title(f"Interpolated LDOS Line Profile\n(bias_mV={bias_mV_ref})")
-    ax3.xaxis.set_major_formatter(
-        FuncFormatter(lambda x, pos: f"{int(x)}")
-    )
-    ax3.set_xlabel("Distance (nm)")
-    ax3.set_ylabel("LDOS")
-
-    plt.tight_layout()
-    plt.show()
-
-    return fig, interpolated_ds
 
 
+updated_GS_LDOS_0T002_N_2T003 = xr.open_dataset('updated_GS_LDOS_0T002_N_2T003.nc')
 
-# -
 
 # %matplotlib qt5
 selected_points, fig = GUI_input2pts_and_selected_line(
@@ -2497,116 +2722,493 @@ selected_points, fig = GUI_input2pts_and_selected_line(
     GS_LDOS_2T_003.sel(bias_mV=0, method='nearest'), 
     ch='LDOS')
 
+selected_points
+
 selected_points1=selected_points.copy()
+
+# +
+import numpy as np
+import xarray as xr
+import skimage.draw
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+
+def plot_LDOS_map_and_profile(dataset, selected_points, ch='LDOS_smoothed', bias_mV_ref=0,
+                              LDOS_cmap='viridis', line_cmap='gnuplot', perc=(0, 98)):
+    """
+    Plot Local Density of States (LDOS) Map and Profile.
+
+    This function performs the following steps:
+    1. Ensures the bias_mV coordinate is sorted in ascending order.
+    2. Converts two real-space coordinate points to the nearest pixel indices in the dataset.
+    3. Computes an anti-aliased line between the start and end points, retaining pixel coverage weights.
+    4. Calculates the physical distance along the line in nanometers.
+    5. Interpolates the LDOS values along the line for each bias voltage by binning distance segments,
+       weighted by the anti-aliased pixel coverage.
+    6. Constructs an xarray.Dataset containing the interpolated LDOS as a function of distance and bias.
+    7. Generates three subplots:
+       a. LDOS map at the reference bias with the gradient line overlay.
+       b. 2D image of the interpolated LDOS as a function of bias and distance.
+       c. 1D interpolated LDOS profile at the reference bias plotted versus distance.
+
+    Parameters
+    ----------
+    dataset : xr.Dataset
+        Xarray dataset containing at least the following:
+        - Data variable `ch` (default 'LDOS_smoothed') with dimensions ('bias_mV', 'Y', 'X').
+        - Coordinates 'bias_mV', 'Y', and 'X'.
+    selected_points : list of tuple of float
+        Two (x, y) real-space coordinates in meters defining the start and end of the profile line.
+    ch : str, optional
+        Channel name for LDOS data in `dataset`.
+    bias_mV_ref : int or float, optional
+        Bias (mV) for extracting and displaying the interpolated profile.
+    LDOS_cmap : str, optional
+        Colormap for LDOS images.
+    line_cmap : str, optional
+        Colormap for the gradient line overlay.
+    perc : tuple of float, optional
+        Lower and upper percentiles for image contrast scaling.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        Figure containing the three subplots.
+    interpolated_ds : xr.Dataset
+        Dataset with dimensions ('distance', 'bias_mV') and variable 'LDOS_interpolated'.
+
+    Raises
+    ------
+    ValueError
+        If no valid anti-aliased line pixels are found.
+    """
+
+    # 1) Ensure bias_mV is sorted ascending
+    if dataset['bias_mV'].values[0] > dataset['bias_mV'].values[-1]:
+        dataset = dataset.sortby('bias_mV')
+    ldos_array = dataset[ch]
+
+    # 2) Convert real-space points to dataset indices
+    start_point, end_point = selected_points
+    start_idx = (
+        np.abs(ldos_array.Y.values - start_point[1]).argmin(),
+        np.abs(ldos_array.X.values - start_point[0]).argmin()
+    )
+    end_idx = (
+        np.abs(ldos_array.Y.values - end_point[1]).argmin(),
+        np.abs(ldos_array.X.values - end_point[0]).argmin()
+    )
+
+    # 3) Compute anti-aliased line
+    rr, cc, val = skimage.draw.line_aa(*start_idx, *end_idx)
+    valid = (rr >= 0) & (rr < ldos_array.sizes['Y']) & (cc >= 0) & (cc < ldos_array.sizes['X'])
+    rr, cc, val = rr[valid], cc[valid], val[valid]
+    if len(rr) == 0:
+        raise ValueError("No valid data points generated from the selected points.")
+
+    # 4) Calculate physical distance (nm)
+    x0, y0 = dataset['X'].values[start_idx[1]], dataset['Y'].values[start_idx[0]]
+    x1, y1 = dataset['X'].values[end_idx[1]],   dataset['Y'].values[end_idx[0]]
+    total_dist_m = np.hypot(x1 - x0, y1 - y0)
+    num_pts = len(rr)
+    distances = np.linspace(0, total_dist_m * 1e9, num_pts)
+
+    # 5) Interpolate LDOS along the line
+    bins = np.linspace(0, distances[-1], num_pts + 1)
+    ldos_interpolated = []
+    for i in range(ldos_array.sizes['bias_mV']):
+        frame = ldos_array.isel(bias_mV=i).values
+        profile = np.zeros(num_pts)
+        for b in range(num_pts):
+            mask = (distances >= bins[b]) & (distances < bins[b+1])
+            if np.any(mask):
+                vals = frame[rr[mask], cc[mask]] * val[mask]
+                profile[b] = vals.sum() / val[mask].sum()
+            else:
+                profile[b] = np.nan
+        ldos_interpolated.append(profile)
+    ldos_interpolated = np.array(ldos_interpolated).T
+
+    # 6) Create interpolated dataset
+    interpolated_ds = xr.Dataset(
+        {"LDOS_interpolated": (["distance", "bias_mV"], ldos_interpolated)},
+        coords={
+            "bias_mV": ldos_array.bias_mV,
+            "distance": np.linspace(0, total_dist_m * 1e9, num_pts)
+        }
+    )
+    interp_profile = interpolated_ds.sel(bias_mV=bias_mV_ref, method='nearest').LDOS_interpolated.values
+
+    # 7) Plot
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(12, 4))
+
+    # (a) LDOS map with line overlay
+    vmin, vmax = np.nanpercentile(dataset.sel(bias_mV=bias_mV_ref)[ch], perc)
+    dataset.sel(bias_mV=bias_mV_ref)[ch].plot(ax=ax1, cmap=LDOS_cmap, vmin=vmin, vmax=vmax, robust=True)
+    cmap_inst = plt.get_cmap(line_cmap)
+    colors = cmap_inst(np.linspace(0, 1, num_pts))
+    xs = np.linspace(start_point[0], end_point[0], num_pts)
+    ys = np.linspace(start_point[1], end_point[1], num_pts)
+    for j in range(num_pts - 1):
+        ax1.plot(xs[j:j+2], ys[j:j+2], color=colors[j], lw=3, alpha=0.5)
+    ax1.set_aspect('equal')
+    ax1.set_title(f"LDOS Map with Line Profile\n(bias_mV={bias_mV_ref})")
+    ax1.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{int(x*1e9)}"))
+    ax1.yaxis.set_major_formatter(FuncFormatter(lambda y, pos: f"{int(y*1e9)}"))
+    ax1.set_xlabel("X (nm)")
+    ax1.set_ylabel("Y (nm)")
+
+    # (b) 2D profile image (rasterized)
+    flipped = np.flipud(interpolated_ds.LDOS_interpolated.values)
+    im2 = ax2.imshow(flipped, origin='upper', aspect='auto',
+                     extent=[interpolated_ds.bias_mV.min().item(), interpolated_ds.bias_mV.max().item(),
+                             0, distances[-1]],
+                     cmap=LDOS_cmap,
+                     vmin=np.nanpercentile(flipped, perc[0]),
+                     vmax=np.nanpercentile(flipped, perc[1]),
+                     rasterized=True)
+    plt.colorbar(im2, ax=ax2, label='LDOS')
+    for j in range(num_pts):
+        ax2.plot(interpolated_ds.bias_mV.max().item() + 0.1,
+                 distances[j], 'o', color=colors[j], markersize=4)
+    ax2.set_title("LDOS Line Profile")
+    ax2.set_xlabel("Bias (mV)")
+    ax2.set_ylabel("Distance (nm)")
+    ax2.yaxis.set_major_formatter(FuncFormatter(lambda y, pos: f"{int(y)}"))
+
+    # (c) 1D interpolated profile
+    ax3.plot(distances, interp_profile, color='blue', linestyle='-')
+    ax3.set_title(f"Interpolated LDOS Line Profile\n(bias_mV={bias_mV_ref})")
+    ax3.set_xlabel("Distance (nm)")
+    ax3.set_ylabel("LDOS")
+    ax3.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{int(x)}"))
+
+    plt.tight_layout()
+    plt.show()
+
+    return fig, interpolated_ds
+
+
 
 # + editable=true slideshow={"slide_type": ""}
 # %matplotlib inline
-fig1, interpolated_ds1 = plot_LDOS_map_and_profile(updated_GS_LDOS_0T002_N_2T003, selected_points, ch='LDOS',bias_mV_ref = 0.0, perc=(0,99.5))
-fig1.savefig('interpolated_ds1_0T.svg', format='svg')
-fig1.savefig('interpolated_ds1_0T.png', format='png', dpi=600)
-fig2, interpolated_ds2 = plot_LDOS_map_and_profile(GS_LDOS_2T_003, selected_points, ch='LDOS',bias_mV_ref = 0, perc=(0, 95))
-fig1.savefig('interpolated_ds2_2T.svg', format='svg')
-fig1.savefig('interpolated_ds2_2T.png', format='png', dpi=600)
+fig1, interpolated_ds1 = plot_LDOS_map_and_profile(updated_GS_LDOS_0T002_N_2T003, selected_points, ch='LDOS',bias_mV_ref = 0.0, perc=(0,98), 
+                                                   LDOS_cmap='Blues', line_cmap='PuOr')
+fig1.savefig('interpolated_ds1_0T_1.svg', format='svg')
+fig1.savefig('interpolated_ds1_0T_1.png', format='png', dpi=300)
+fig1, interpolated_ds1 = plot_LDOS_map_and_profile(updated_GS_LDOS_0T002_N_2T003, selected_points, ch='LDOS',bias_mV_ref = 0.0, perc=(0,40), 
+                                                   LDOS_cmap='Blues', line_cmap='PuOr')
+fig1.savefig('interpolated_ds1_0T_2.svg', format='svg')
+fig1.savefig('interpolated_ds1_0T_2.png', format='png', dpi=300)
 
 
+fig2, interpolated_ds2 = plot_LDOS_map_and_profile(GS_LDOS_2T_003, selected_points, ch='LDOS',bias_mV_ref = 0, perc=(0, 98),
+                                                   LDOS_cmap='viridis', line_cmap='PuOr')
+fig2.savefig('interpolated_ds2_2T.svg', format='svg')
+fig2.savefig('interpolated_ds2_2T.png', format='png', dpi=300)
 # -
+
+
+
+# ## another line profile on overlaid image 
+
+# +
+import numpy as np
+import xarray as xr
+import skimage.draw
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+
+def compare_cropped_large_and_small_area_v3_lineprofile(
+    ds1, ds2, selected_points,
+    channel='LDOS', bias_mV_ref=0.0, perc=(2, 98),
+    alpha_bg=0.5, alpha_fg=1.0,
+    cmap_bg='viridis', cmap_fg='Blues',
+    line_cmap='gnuplot',
+    scalebar_length_nm=20,
+    scalebar_color='white'
+):
+    """
+    Overlay two LDOS conductance maps and draw the line profile between selected points.
+
+    Parameters
+    ----------
+    ds1 : xr.Dataset
+        First dataset (will be plotted on top).
+    ds2 : xr.Dataset
+        Second dataset (will be plotted underneath).
+    selected_points : list of tuple
+        [(x0, y0), (x1, y1)] in dataset coordinates (meters).
+    channel : str, optional
+        Name of the LDOS channel (default 'LDOS').
+    bias_mV_ref : float, optional
+        Bias at which to select the conductance map (default 0.0 mV).
+    perc : tuple of float, optional
+        Percentile range for colormap clipping (default (2, 98)).
+    alpha_bg : float, optional
+        Opacity of the background image (ds2) (default 0.5).
+    alpha_fg : float, optional
+        Opacity of the foreground image (ds1) (default 1.0).
+    cmap_bg : str, optional
+        Colormap for the background image (default 'viridis').
+    cmap_fg : str, optional
+        Colormap for the foreground image (default 'Blues').
+    line_cmap : str, optional
+        Colormap for the gradient line (default 'gnuplot').
+    scalebar_length_nm : float, optional
+        Length of the scalebar in nanometers (default 20 nm).
+    scalebar_color : str, optional
+        Color of the scalebar and its text (default 'white').
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object containing the overlay and line.
+    """
+
+    # 1. Select conductance maps at the given bias
+    img_bg = ds2[channel].sel(bias_mV=bias_mV_ref, method='nearest') * 1e9  # convert to nS
+    img_fg = ds1[channel].sel(bias_mV=bias_mV_ref, method='nearest') * 1e9  # convert to nS
+
+    # 2. Compute vmin/vmax based on combined percentiles
+    def _vmin_vmax(arr, p):
+        flat = arr.values.flatten()
+        return np.nanpercentile(flat, p)
+
+    vmin_bg, vmax_bg = _vmin_vmax(img_bg, perc)
+    vmin_fg, vmax_fg = _vmin_vmax(img_fg, perc)
+    vmin, vmax = min(vmin_bg, vmin_fg), max(vmax_bg, vmax_fg)
+
+    # 3. Define extent in data coordinates
+    extent = [
+        float(img_bg.coords['X'].min()), float(img_bg.coords['X'].max()),
+        float(img_bg.coords['Y'].min()), float(img_bg.coords['Y'].max())
+    ]
+
+    # 4. Helper to add scalebar
+    def add_scalebar(ax, data, length_nm, color):
+        x0, x1 = float(data.coords['X'].min()), float(data.coords['X'].max())
+        y0 = float(data.coords['Y'].min())
+        bar_x_start = x0 + 0.05*(x1 - x0)
+        bar_y = y0 + 0.05*(x1 - x0)
+        bar_x_end = bar_x_start + length_nm*1e-9
+        ax.plot([bar_x_start, bar_x_end], [bar_y, bar_y],
+                color=color, lw=2)
+        ax.text((bar_x_start+bar_x_end)/2, bar_y + 0.005*(x1-x0),
+                f'{length_nm} nm', color=color,
+                ha='center', va='bottom', fontsize=10)
+
+    # 5. Create figure
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.set_title("Overlaid Conductance Maps\nwith Line Profile")
+    ax.set_xticks([]); ax.set_yticks([])
+
+    # 6. Plot background and foreground
+    ax.imshow(img_bg.values, origin='lower', extent=extent,
+              cmap=cmap_bg, vmin=vmin, vmax=vmax, alpha=alpha_bg)
+    ax.imshow(img_fg.values, origin='lower', extent=extent,
+              cmap=cmap_fg, vmin=vmin, vmax=vmax, alpha=alpha_fg)
+
+    # 7. Draw scalebar
+    add_scalebar(ax, img_bg, scalebar_length_nm, scalebar_color)
+
+    # 8. Compute gradient line between selected points
+    (x0, y0), (x1, y1) = selected_points
+    # Number of segments
+    num_pts = 200
+    cmap_line = plt.get_cmap(line_cmap)
+    colors = cmap_line(np.linspace(0, 1, num_pts))
+    x_vals = np.linspace(x0, x1, num_pts)
+    y_vals = np.linspace(y0, y1, num_pts)
+
+    # Draw gradient line
+    for i in range(num_pts - 1):
+        ax.plot(x_vals[i:i+2], y_vals[i:i+2],
+                color=colors[i], lw=2, alpha=0.8)
+
+    return fig
+
+
+# +
+
+
+# 4) 배경(ds2) 위에 전경(ds1)를 오버레이하고 line profile을 그리는 함수 호출
+fig_overlay = compare_cropped_large_and_small_area_v3_lineprofile(
+    ds1=updated_GS_LDOS_0T002_N_2T003,
+    ds2=GS_LDOS_2T_003,
+    selected_points=selected_points,
+    channel='LDOS',
+    bias_mV_ref=0.0,
+    perc=(0, 95),
+    alpha_bg=1,          # 배경 투명도
+    alpha_fg=0.5,          # 전경 투명도
+    cmap_bg='viridis',     # 배경 컬맵
+    cmap_fg='Blues',       # 전경 컬맵
+    line_cmap='PuOr',   # line gradient 컬맵
+    scalebar_length_nm=20,
+    scalebar_color='white'
+)
+fig_overlay
+# -
+
+
+
+fig_overlay.savefig('fig_overlay.png',dpi=600)
+fig_overlay.savefig('fig_overlay.svg')
+
+
+
 
 
 # ### line profile layout change 
 
+# +
+import numpy as np
+import xarray as xr
+import skimage.draw
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+
 def plot_LDOS_map_and_profile_v2_1(
     dataset, selected_points, ch='LDOS_smoothed', bias_mV_ref=0,
-    LDOS_cmap='viridis', line_cmap='gnuplot',
+    LDOS_cmap='viridis', line_cmap='PuOr',
     ZBCM_perc=(2, 98), LP_perc=(2, 98),
     scalebar_length_nm=None, scalebar_color='white'):
 
+    """
+    Plots two panels:
+    1) LDOS map at a given bias with the gradient line overlay.
+    2) 2D LDOS line profile (bias vs distance) using true, per-pixel weighted values.
+
+    Parameters:
+    - dataset (xr.Dataset): Dataset containing LDOS data.
+    - selected_points (list of two (x, y) tuples in meters): Start and end of line.
+    - ch (str): LDOS channel name.
+    - bias_mV_ref (float): Bias for the map panel.
+    - LDOS_cmap, line_cmap (str): Colormap names.
+    - ZBCM_perc, LP_perc (tuple): Percentile ranges for map and profile.
+    - scalebar_length_nm (float or None): Length of scalebar in nm.
+    - scalebar_color (str): Color of the scalebar and text.
+
+    Returns:
+    - fig (plt.Figure), interpolated_ds (xr.Dataset)
+    """
+
+    # 1) Ensure bias_mV is ascending
     if dataset['bias_mV'].values[0] > dataset['bias_mV'].values[-1]:
         dataset = dataset.sortby('bias_mV')
 
+    # 2) Extract array and compute start/end indices
     ldos_array = dataset[ch]
-    start_idx = (np.abs(ldos_array.Y.values - selected_points[0][1]).argmin(),
-                 np.abs(ldos_array.X.values - selected_points[0][0]).argmin())
-    end_idx = (np.abs(ldos_array.Y.values - selected_points[1][1]).argmin(),
-               np.abs(ldos_array.X.values - selected_points[1][0]).argmin())
+    (y0_idx, x0_idx) = (
+        np.abs(ldos_array.Y.values - selected_points[0][1]).argmin(),
+        np.abs(ldos_array.X.values - selected_points[0][0]).argmin()
+    )
+    (y1_idx, x1_idx) = (
+        np.abs(ldos_array.Y.values - selected_points[1][1]).argmin(),
+        np.abs(ldos_array.X.values - selected_points[1][0]).argmin()
+    )
 
-    rr, cc, val = skimage.draw.line_aa(start_idx[0], start_idx[1], end_idx[0], end_idx[1])
-    valid = (rr >= 0) & (rr < ldos_array.sizes['Y']) & (cc >= 0) & (cc < ldos_array.sizes['X'])
-    rr, cc, val = rr[valid], cc[valid], val[valid]
-
+    # 3) Anti-aliased line coordinates + weights
+    rr, cc, val = skimage.draw.line_aa(y0_idx, x0_idx, y1_idx, x1_idx)
+    mask = (
+        (rr >= 0) & (rr < ldos_array.sizes['Y']) &
+        (cc >= 0) & (cc < ldos_array.sizes['X'])
+    )
+    rr, cc, val = rr[mask], cc[mask], val[mask]
     if len(rr) == 0:
         raise ValueError("No valid points on line.")
 
-    ldos_interpolated = []
-    for i in range(ldos_array.sizes['bias_mV']):
-        ldos_slice = ldos_array.isel(bias_mV=i).values
-        profile = np.sum(ldos_slice[rr, cc] * val[:, np.newaxis], axis=0)
-        ldos_interpolated.append(profile)
-    ldos_interpolated = np.array(ldos_interpolated).T
-
-    x_coords = dataset['X'].values
-    y_coords = dataset['Y'].values
-    X_map = x_coords[cc]
-    Y_map = y_coords[rr]
+    # 4) Physical projection distance (nm)
     x0, y0 = selected_points[0]
     x1, y1 = selected_points[1]
     dx, dy = x1 - x0, y1 - y0
-    line_length = np.sqrt(dx**2 + dy**2)
-    proj_dist = ((X_map - x0) * dx + (Y_map - y0) * dy) / line_length
-    distance_nm = proj_dist * 1e9
+    length = np.hypot(dx, dy)
+    X_map = dataset['X'].values[cc]
+    Y_map = dataset['Y'].values[rr]
+    proj = ((X_map - x0)*dx + (Y_map - y0)*dy) / length
+    distance_nm = proj * 1e9
+    num_pixels = len(rr)
 
+    # 5) Interpolate the line profile: true per-pixel weighted values
+    ldos_interpolated = []
+    for i in range(ldos_array.sizes['bias_mV']):
+        sl = ldos_array.isel(bias_mV=i).values
+        profile = sl[rr, cc] * val     # vector of length num_pixels
+        ldos_interpolated.append(profile)
+    ldos_interpolated = np.array(ldos_interpolated).T  # (distance, bias_mV)
+
+    # 6) Build xarray Dataset
     interpolated_ds = xr.Dataset(
-        {"LDOS_interpolated": (["distance", "bias_mV"], ldos_interpolated)},
-        coords={"distance": distance_nm, "bias_mV": ldos_array.bias_mV}
+        {
+            "LDOS_interpolated": (["distance", "bias_mV"], ldos_interpolated)
+        },
+        coords={
+            "distance": distance_nm,
+            "bias_mV":  ldos_array.bias_mV
+        }
     )
 
-    fig = plt.figure(figsize=(10, 10))
+    # 7) Setup figure
+    fig = plt.figure(figsize=(8, 10))
     gs = GridSpec(2, 1, height_ratios=[1, 1], hspace=0.3, figure=fig)
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
 
-    # 1. LDOS map
-    ldos_map = dataset.sel(bias_mV=bias_mV_ref, method='nearest')[ch].values
-    vmin_map, vmax_map = np.nanpercentile(ldos_map, ZBCM_perc)
-    extent_map = [x_coords.min(), x_coords.max(), y_coords.min(), y_coords.max()]
-    im1 = ax1.imshow(ldos_map, cmap=LDOS_cmap, origin='lower', extent=extent_map,
-                     vmin=vmin_map, vmax=vmax_map, aspect='equal')
+    # — Panel 1: LDOS map + gradient line —
+    zmap = dataset.sel(bias_mV=bias_mV_ref, method='nearest')[ch].values
+    vmin_map, vmax_map = np.nanpercentile(zmap, ZBCM_perc)
+    ext = [
+        dataset['X'].values.min(), dataset['X'].values.max(),
+        dataset['Y'].values.min(), dataset['Y'].values.max()
+    ]
+    im1 = ax1.imshow(zmap, cmap=LDOS_cmap, origin='lower',
+                     extent=ext, vmin=vmin_map, vmax=vmax_map,
+                     aspect='equal')
+    plt.colorbar(im1, ax=ax1, orientation='vertical',
+                 fraction=0.035, pad=0.02, label='LDOS')
 
-    num_segments = len(distance_nm)
-    colors = plt.get_cmap(line_cmap)(np.linspace(0, 1, num_segments))
-    x_line = np.linspace(x0, x1, num_segments)
-    y_line = np.linspace(y0, y1, num_segments)
-    for i in range(num_segments - 1):
-        ax1.plot(x_line[i:i+2], y_line[i:i+2], color=colors[i], lw=3, alpha=0.6)
-
+    cmap_line = plt.get_cmap(line_cmap)
+    colors = cmap_line(np.linspace(0, 1, num_pixels))
+    x_line = np.linspace(x0, x1, num_pixels)
+    y_line = np.linspace(y0, y1, num_pixels)
+    for i in range(num_pixels-1):
+        ax1.plot(x_line[i:i+2], y_line[i:i+2],
+                 color=colors[i], lw=3, alpha=0.6)
     ax1.set_xticks([]); ax1.set_yticks([])
-    ax1.set_title(f"LDOS Map with Line Profile \n (bias = {bias_mV_ref} mV)")
-    plt.colorbar(im1, ax=ax1, orientation='vertical', fraction=0.035, pad=0.02, label='LDOS')
+    ax1.set_title(f"LDOS Map with Line Profile\n(bias = {bias_mV_ref} mV)")
 
-    # Scale bar
-    x_len_nm = (x_coords[-1] - x_coords[0]) * 1e9
-    bar_len_nm = scalebar_length_nm if scalebar_length_nm else 0.2 * x_len_nm
-    bar_x_start = x_coords[0] + 0.05 * (x_coords[-1] - x_coords[0])
-    bar_x_end = bar_x_start + (bar_len_nm * 1e-9)
-    bar_y = y_coords[0] + 0.05 * (y_coords[-1] - y_coords[0])
-    ax1.plot([bar_x_start, bar_x_end], [bar_y, bar_y], color=scalebar_color, lw=2)
-    ax1.text((bar_x_start + bar_x_end)/2, bar_y + 0.005 * (y_coords[-1] - y_coords[0]),
-             f"{bar_len_nm:.0f} nm", color=scalebar_color, ha='center', va='bottom', fontsize=10)
+    # scalebar
+    x_span_nm = np.ptp(dataset['X'].values) * 1e9
+    bl = scalebar_length_nm if scalebar_length_nm else 0.2 * x_span_nm
+    bx0 = dataset['X'].values.min() + 0.05 * np.ptp(dataset['X'].values)
+    bx1 = bx0 + bl * 1e-9
+    by  = dataset['Y'].values.min() + 0.05 * np.ptp(dataset['Y'].values)
+    ax1.plot([bx0, bx1], [by, by], color=scalebar_color, lw=2)
+    ax1.text((bx0+bx1)/2, by + 0.005*np.ptp(dataset['Y'].values),
+             f"{bl:.0f} nm", color=scalebar_color,
+             ha='center', va='bottom', fontsize=10)
 
-    # 2. Line profile
-    flipped = np.flipud(interpolated_ds.LDOS_interpolated.values)
-    bias_min = interpolated_ds.bias_mV.min().item()
-    bias_max = interpolated_ds.bias_mV.max().item()
-    extent_profile = [bias_min, bias_max, 0, distance_nm.max()]
-    aspect_ratio = (bias_max - bias_min) / distance_nm.max()
-    vmin_lp = np.nanpercentile(flipped, LP_perc[0])
-    vmax_lp = np.nanpercentile(flipped, LP_perc[1])
+    # — Panel 2: LDOS Line Profile heatmap —
+    heat = np.flipud(interpolated_ds.LDOS_interpolated.values)
+    bmin = interpolated_ds.bias_mV.min().item()
+    bmax = interpolated_ds.bias_mV.max().item()
+    ext2 = [bmin, bmax, 0, distance_nm.max()]
+    aspect = (bmax - bmin) / distance_nm.max()
+    vmin_lp = np.nanpercentile(heat, LP_perc[0])
+    vmax_lp = np.nanpercentile(heat, LP_perc[1])
+    im2 = ax2.imshow(heat, cmap=LDOS_cmap, origin='upper',
+                     extent=ext2, vmin=vmin_lp, vmax=vmax_lp,
+                     aspect=aspect)
+    plt.colorbar(im2, ax=ax2, orientation='vertical',
+                 fraction=0.035, pad=0.02, label='LDOS')
 
-    im2 = ax2.imshow(flipped, cmap=LDOS_cmap, origin='upper', extent=extent_profile,
-                     vmin=vmin_lp, vmax=vmax_lp, aspect=aspect_ratio)
-    plt.colorbar(im2, ax=ax2, orientation='vertical', fraction=0.035, pad=0.02, label='LDOS')
+    ax2.set_xlim(bmin, bmax)
 
-    for i in range(num_segments):
-        ax2.plot(bias_max + 0.1, distance_nm[i], 'o', color=colors[i], markersize=4)
+    # optional: mark each pixel at the last column
+    for i in range(num_pixels):
+        ax2.plot(bmax, distance_nm[i],
+                 'o', color=colors[i], markersize=4)
 
     ax2.set_xlabel("Bias (mV)")
     ax2.set_ylabel("Distance (nm)")
@@ -2615,13 +3217,16 @@ def plot_LDOS_map_and_profile_v2_1(
     plt.show()
     return fig, interpolated_ds
 
+# -
+
 
 
 # +
 fig1, interpolated_ds1 = plot_LDOS_map_and_profile_v2_1(updated_GS_LDOS_0T002_N_2T003,
                                                        selected_points, 
                                                        ch='LDOS',
-                                                       bias_mV_ref = 0.0, 
+                                                       bias_mV_ref = 0.0,
+                                                        LDOS_cmap='Blues', line_cmap='PuOr',
                                                        ZBCM_perc=(0, 98), LP_perc=(0, 35),
                                                        scalebar_length_nm=20, scalebar_color='white',
                                                       )
@@ -2634,6 +3239,7 @@ fig2, interpolated_ds2 = plot_LDOS_map_and_profile_v2_1(GS_LDOS_2T_003,
                                                        selected_points,
                                                        ch='LDOS',
                                                        bias_mV_ref = 0,
+                                                        LDOS_cmap='viridis', line_cmap='PuOr',
                                                        ZBCM_perc=(0, 98), LP_perc=(0, 40),
                                                        scalebar_length_nm=20, scalebar_color='white',
                                                       )
@@ -2785,20 +3391,25 @@ def plot_LDOS_map_and_profile_v2_2(dataset, selected_points, ch='LDOS_smoothed',
 
     return fig, interpolated_ds
 
-fig, interpolated_ds1 = plot_LDOS_map_and_profile_v2_2(updated_GS_LDOS_0T002_N_2T003,
+fig1, interpolated_ds1 = plot_LDOS_map_and_profile_v2_2(updated_GS_LDOS_0T002_N_2T003,
                                                        selected_points, 
                                                        ch='LDOS',
                                                        bias_mV_ref = 0.2, 
+                                                        LDOS_cmap='Blues', line_cmap='PuOr',
                                                        ZBCM_perc=(2, 98), LP_perc=(2, 78),
                                                        scalebar_length_nm=20, scalebar_color='white')
-fig, interpolated_ds2 = plot_LDOS_map_and_profile_v2_2(GS_LDOS_2T_003,
+fig1
+
+# +
+fig2, interpolated_ds2 = plot_LDOS_map_and_profile_v2_2(GS_LDOS_2T_003,
                                                        selected_points,
                                                        ch='LDOS',
                                                        bias_mV_ref = 0,
+                                                        LDOS_cmap='viridis', line_cmap='PuOr',
                                                        ZBCM_perc=(2, 98), LP_perc=(2, 78),
                                                        scalebar_length_nm=20, scalebar_color='white')
 
-fig
+fig2
 
 # +
 import numpy as np
@@ -3209,25 +3820,33 @@ def plot_LDOS_map_and_profile_v2_3_updated(
 
 
 
-# -
 
+# +
 fig1, interpolated_ds1 = plot_LDOS_map_and_profile_v2_3_updated(updated_GS_LDOS_0T002_N_2T003,
                                                        selected_points, 
                                                        ch='LDOS',
                                                        bias_mV_ref = 0.0, 
+                                                                LDOS_cmap='Blues', line_cmap='PuOr',
                                                        ZBCM_perc=(0, 98), LP_perc=(0, 65),
                                                        scalebar_length_nm=20, scalebar_color='white',
                                                       )
-fig1
+fig1.savefig('cropped_area_0T.svg', format='svg')
+fig1.savefig('cropped_area_0T.png', format='png', dpi=600)
+
+
 fig2, interpolated_ds2 = plot_LDOS_map_and_profile_v2_3_updated(GS_LDOS_2T_003,
                                                        selected_points,
                                                        ch='LDOS',
                                                        bias_mV_ref = 0,
+                                                                LDOS_cmap='viridis', line_cmap='PuOr',
                                                        ZBCM_perc=(0, 98), LP_perc=(0, 70),
                                                        scalebar_length_nm=20, scalebar_color='white',
                                                       )
-fig2
 
+fig2.savefig('cropped_area_2T.svg', format='svg')
+fig2.savefig('cropped_area_2T.png', format='png', dpi=600)
+
+# -
 
 def plot_LDOS_map_and_profile_v3(dataset, selected_points, ch='LDOS_smoothed', bias_mV_ref=0.0,
                                   LDOS_cmap='viridis', line_cmap='gnuplot',
@@ -3381,212 +4000,329 @@ def plot_LDOS_map_and_profile_v3(dataset, selected_points, ch='LDOS_smoothed', b
 
 
 
+# +
+import numpy as np
+import xarray as xr
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+import skimage.draw
+from skimage.transform import rotate
+
 def plot_LDOS_map_and_profile_v3(dataset, selected_points, ch='LDOS_smoothed', bias_mV_ref=0.0,
-                                  LDOS_cmap='viridis', line_cmap='gnuplot',
+                                  LDOS_cmap='viridis', line_cmap='PuOr',
                                   ZBCM_perc=(2, 98), LP_perc=(2, 98),
                                   scalebar_length_nm=None, scalebar_color='white',
                                   line_width_px=1, width_nm=10):
-    import numpy as np
-    import xarray as xr
-    import matplotlib.pyplot as plt
-    import skimage.draw
-    from matplotlib.gridspec import GridSpec
-    from matplotlib.patches import Polygon
-    from skimage.transform import rotate
+    """
+    1) Overlay a colored line on the LDOS map
+    2) 2D LDOS profile
+    3) Crop and rotate the selected line region to set it vertical (start at bottom, end at top)
 
-    # 1. 정렬
+    Each panel's colormap range is set according to ZBCM_perc/LP_perc, and shrink=1.0 is applied so the colorbar height matches the image height.
+    """
+    # ─── 1. Prepare data ─────────────────────────────────────────────
     if dataset['bias_mV'].values[0] > dataset['bias_mV'].values[-1]:
         dataset = dataset.sortby('bias_mV')
 
     x_coords = dataset['X'].values
     y_coords = dataset['Y'].values
     bias_vals = dataset['bias_mV'].values
-    ch_data = dataset[ch]
+    ch_data   = dataset[ch]
 
-    x0, y0 = selected_points[0]
-    x1, y1 = selected_points[1]
+    (x0, y0), (x1, y1) = selected_points
     dx, dy = x1 - x0, y1 - y0
     line_length = np.hypot(dx, dy)
 
     start_idx = (np.abs(y_coords - y0).argmin(), np.abs(x_coords - x0).argmin())
-    end_idx = (np.abs(y_coords - y1).argmin(), np.abs(x_coords - x1).argmin())
-    rr_u, cc_u = skimage.draw.line(start_idx[0], start_idx[1], end_idx[0], end_idx[1])
+    end_idx   = (np.abs(y_coords - y1).argmin(), np.abs(x_coords - x1).argmin())
+    rr_u, cc_u = skimage.draw.line(start_idx[0], start_idx[1],
+                                   end_idx[0],   end_idx[1])
 
-    # 2. Line profile 계산
+    # ─── 2. 균일 프로파일 계산 ──────────────────────────────────────
     def compute_uniform_ldos_profile(ldos_array, rr, cc, width):
-        half_w = width // 2
+        half = width // 2
         n_bias = ldos_array.sizes['bias_mV']
-        result = np.zeros((len(rr), n_bias))
+        prof = np.zeros((len(rr), n_bias))
         for b in range(n_bias):
-            ldos_slice = ldos_array.isel(bias_mV=b).values
-            for i in range(len(rr)):
-                values = []
-                for dy in range(-half_w, half_w + 1):
-                    for dx in range(-half_w, half_w + 1):
-                        ry = rr[i] + dy
-                        cx = cc[i] + dx
-                        if 0 <= ry < ldos_slice.shape[0] and 0 <= cx < ldos_slice.shape[1]:
-                            values.append(ldos_slice[ry, cx])
-                result[i, b] = np.nanmean(values) if values else np.nan
-        return result
+            plane = ldos_array.isel(bias_mV=b).values
+            for i, (r, c) in enumerate(zip(rr, cc)):
+                vals = []
+                for dy_ in range(-half, half + 1):
+                    for dx_ in range(-half, half + 1):
+                        ry, cx = r + dy_, c + dx_
+                        if 0 <= ry < plane.shape[0] and 0 <= cx < plane.shape[1]:
+                            vals.append(plane[ry, cx])
+                prof[i, b] = np.nanmean(vals) if vals else np.nan
+        return prof
 
     profile = compute_uniform_ldos_profile(ch_data, rr_u, cc_u, line_width_px)
     proj_dist = np.linspace(0, line_length * 1e9, len(rr_u))
 
-    # 3. 회전 Crop 이미지 계산
-    def get_rectangle_corners(x0, y0, x1, y1, width_nm):
-        dx, dy = x1 - x0, y1 - y0
-        nx, ny = -dy, dx
-        norm = np.hypot(nx, ny)
-        nx /= norm; ny /= norm
-        offset_x = nx * width_nm * 1e-9 / 2
-        offset_y = ny * width_nm * 1e-9 / 2
-        return np.array([
-            [x0 + offset_x, y0 + offset_y],
-            [x0 - offset_x, y0 - offset_y],
-            [x1 - offset_x, y1 - offset_y],
-            [x1 + offset_x, y1 + offset_y]
-        ])
+    # ─── 3. 회전·크롭 (시작점 아래, 끝점 위) ──────────────────────────
+    def rotate_and_crop_rectangle(dataset, sel_pts, width_nm, ch, bias_ref):
+        data2d = dataset.sel(bias_mV=bias_ref, method='nearest')[ch].values
+        x_c = dataset['X'].values; y_c = dataset['Y'].values
+        dx = x_c[1] - x_c[0]; dy = y_c[1] - y_c[0]
 
-    def rotate_and_crop_rectangle(dataset, selected_points, width_nm, ch, bias_mV_ref):
-        data_2d = dataset.sel(bias_mV=bias_mV_ref, method='nearest')[ch].values
-        x_coords = dataset['X'].values
-        y_coords = dataset['Y'].values
-        dx_nm = (x_coords[1] - x_coords[0]) * 1e9
+        (x0_, y0_), (x1_, y1_) = sel_pts
+        theta = np.arctan2(y1_ - y0_, x1_ - x0_)
+        angle = -(90.0 - np.degrees(theta))
 
-        (x0, y0), (x1, y1) = selected_points
-        theta_rad = np.arctan2(y1 - y0, x1 - x0)
-        angle_deg = -(90 - np.degrees(theta_rad))
-        rotated_img = rotate(data_2d, angle=angle_deg, resize=True, order=1, mode='constant', cval=np.nan)
+        # 원본 좌표 → 회전
+        start_pix = np.array([(y0_ - y_c[0]) / dy, (x0_ - x_c[0]) / dx])
+        end_pix   = np.array([(y1_ - y_c[0]) / dy, (x1_ - x_c[0]) / dx])
+        rot = rotate(data2d, angle=angle, resize=True, order=1,
+                     mode='constant', cval=np.nan)
 
-        center_x = (x0 + x1) / 2
-        center_y = (y0 + y1) / 2
-        center_ix = (center_x - x_coords[0]) / (x_coords[1] - x_coords[0])
-        center_iy = (center_y - y_coords[0]) / (y_coords[1] - y_coords[0])
-        original_center = np.array([data_2d.shape[0] / 2, data_2d.shape[1] / 2])
-        center_pix = np.array([center_iy, center_ix])
-        shift = center_pix - original_center
-        rot_matrix = np.array([
-            [np.cos(theta_rad), -np.sin(theta_rad)],
-            [np.sin(theta_rad),  np.cos(theta_rad)]
-        ])
-        center_rotated = rot_matrix @ shift + np.array(rotated_img.shape) / 2
+        orig_ctr = np.array(data2d.shape) / 2.0
+        new_ctr  = np.array(rot.shape) / 2.0
+        phi = np.deg2rad(angle)
+        R = np.array([[np.cos(phi), -np.sin(phi)],
+                      [np.sin(phi),  np.cos(phi)]])
+        new_start = R.dot(start_pix - orig_ctr) + new_ctr
+        new_end   = R.dot(end_pix   - orig_ctr) + new_ctr
 
-        width_px = int(width_nm / dx_nm)
-        height_px = len(rr_u)  # ← 수정: 실제 line 길이와 일치하게
-        y_min = int(center_rotated[0] - height_px / 2)
-        y_max = int(center_rotated[0] + height_px / 2)
-        x_min = int(center_rotated[1] - width_px / 2)
-        x_max = int(center_rotated[1] + width_px / 2)
+        # 크롭 사각형 픽셀 좌표 계산
+        nx, ny = -(y1_ - y0_), (x1_ - x0_)
+        norm = np.hypot(nx, ny); nx, ny = nx/norm, ny/norm
+        half = width_nm * 1e-9 / 2
+        rect = [
+            (x0_ + nx*half, y0_ + ny*half),
+            (x0_ - nx*half, y0_ - ny*half),
+            (x1_ - nx*half, y1_ - ny*half),
+            (x1_ + nx*half, y1_ + ny*half),
+        ]
+        pix = [np.array([(cy - y_c[0]) / dy, (cx - x_c[0]) / dx]) for (cx, cy) in rect]
+        rp = np.array([R.dot(p - orig_ctr) + new_ctr for p in pix])
 
-        return rotated_img[y_min:y_max, x_min:x_max], width_px
+        r0, c0 = np.floor(rp.min(axis=0)).astype(int)
+        r1, c1 = np.ceil (rp.max(axis=0)).astype(int)
+        r0, c0 = max(r0,0), max(c0,0)
+        r1, c1 = min(r1, rot.shape[0]), min(c1, rot.shape[1])
 
-    cropped_rotated, width_px = rotate_and_crop_rectangle(dataset, selected_points, width_nm, ch, bias_mV_ref)
+        crop = rot[r0:r1, c0:c1]
+        if new_start[0] > new_end[0]:
+            crop = np.flipud(crop)
+        return crop, crop.shape[1]
 
-    # 4. 시각화
-    fig = plt.figure(figsize=(6, 14), constrained_layout=True)
-    gs = GridSpec(3, 1, height_ratios=[1.2, 1, 1], figure=fig)
+    cropped, width_px = rotate_and_crop_rectangle(
+        dataset, selected_points, width_nm, ch, bias_mV_ref
+    )
+
+    # ─── 4. 시각화 ─────────────────────────────────────────────────
+    fig = plt.figure(figsize=(4, 12), constrained_layout=True)
+    gs = GridSpec(3, 1, height_ratios=[1.3, 1.2, 0.8], figure=fig)
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
     ax3 = fig.add_subplot(gs[2])
 
-    # (1) LDOS map with colored line
+    # (1) LDOS Map + 컬러 라인
     ldos_map = dataset.sel(bias_mV=bias_mV_ref, method='nearest')[ch].values
     vmin_map, vmax_map = np.nanpercentile(ldos_map, ZBCM_perc)
-    extent_map = [x_coords.min(), x_coords.max(), y_coords.min(), y_coords.max()]
-    im1 = ax1.imshow(ldos_map, cmap=LDOS_cmap, origin='lower', extent=extent_map,
+    im1 = ax1.imshow(ldos_map, cmap=LDOS_cmap, origin='lower',
+                     extent=[x_coords.min(), x_coords.max(), y_coords.min(), y_coords.max()],
                      vmin=vmin_map, vmax=vmax_map, aspect='equal')
-
-    num_segments = len(rr_u)
-    colors = plt.get_cmap(line_cmap)(np.linspace(0, 1, num_segments))
-    x_line = np.linspace(x0, x1, num_segments)
-    y_line = np.linspace(y0, y1, num_segments)
-    for i in range(num_segments - 1):
-        ax1.plot(x_line[i:i+2], y_line[i:i+2], color=colors[i], lw=3, alpha=0.6)
-
-    # Scale bar
+    # 컬러라인 및 스케일바
+    segs = len(rr_u)
+    colors = plt.get_cmap(line_cmap)(np.linspace(0,1,segs))
+    xs = np.linspace(x0, x1, segs); ys = np.linspace(y0, y1, segs)
+    for i in range(segs-1):
+        ax1.plot(xs[i:i+2], ys[i:i+2], color=colors[i], lw=3, alpha=0.6)
     if scalebar_length_nm:
-        bar_x_start = x_coords[0] + 0.05 * (x_coords[-1] - x_coords[0])
-        bar_x_end = bar_x_start + (scalebar_length_nm * 1e-9)
-        bar_y = y_coords[0] + 0.05 * (y_coords[-1] - y_coords[0])
-        ax1.plot([bar_x_start, bar_x_end], [bar_y, bar_y], color=scalebar_color, lw=2)
-        ax1.text((bar_x_start + bar_x_end)/2, bar_y + 0.01 * (y_coords[-1] - y_coords[0]),
-                 f"{scalebar_length_nm:.0f} nm", color=scalebar_color, ha='center', va='bottom', fontsize=10)
-
+        bx = x_coords[0] + 0.05*(x_coords[-1]-x_coords[0])
+        by = y_coords[0] + 0.05*(y_coords[-1]-y_coords[0])
+        ax1.plot([bx, bx+scalebar_length_nm*1e-9],[by,by],
+                 color=scalebar_color, lw=2)
+        ax1.text(bx+scalebar_length_nm*1e-9/2,
+                 by+0.01*(y_coords[-1]-y_coords[0]),
+                 f"{scalebar_length_nm:.0f} nm",
+                 color=scalebar_color, ha='center', va='bottom',
+                 fontsize=10)
     ax1.set_xticks([]); ax1.set_yticks([])
     ax1.set_title(f"LDOS Map with Line Profile\n(at bias = {bias_mV_ref:.1f} mV)")
-    fig.colorbar(im1, ax=ax1, orientation='vertical', fraction=0.035, pad=0.01, label='LDOS')
+    fig.colorbar(im1, ax=ax1, orientation='vertical',
+                 fraction=0.035, pad=0.01, shrink=1.0, label='LDOS')
 
-    # (2) Line Profile
-    flipped = np.flipud(profile)
-    vmin_lp = np.nanpercentile(flipped, LP_perc[0])
-    vmax_lp = np.nanpercentile(flipped, LP_perc[1])
-    aspect_ratio = (bias_vals.max() - bias_vals.min()) / proj_dist.max()
-    im2 = ax2.imshow(flipped, cmap=LDOS_cmap, origin='upper',
+    # (2) LDOS Profile
+    flipped_prof = np.flipud(profile)
+    vmin_lp, vmax_lp = np.nanpercentile(flipped_prof, LP_perc)
+    im2 = ax2.imshow(flipped_prof, cmap=LDOS_cmap, origin='upper',
                      extent=[bias_vals.min(), bias_vals.max(), 0, proj_dist.max()],
-                     vmin=vmin_lp, vmax=vmax_lp, aspect=aspect_ratio)
+                     vmin=vmin_lp, vmax=vmax_lp,
+                     aspect=(bias_vals.max()-bias_vals.min())/proj_dist.max())
     ax2.set_xlabel("Bias (mV)")
     ax2.set_ylabel("Distance (nm)")
-    ax2.set_title(f"LDOS Profile")# (line width = {line_width_px})")
-    fig.colorbar(im2, ax=ax2, orientation='vertical', fraction=0.035, pad=0.01, label='LDOS')
+    ax2.set_title("LDOS Profile")
+    fig.colorbar(im2, ax=ax2, orientation='vertical',
+                 fraction=0.035, pad=0.01, shrink=1.0, label='LDOS')
 
-    # (3) Cropped Rotated LDOS — 이제는 aspect='equal'로 정확히 설정됨
-    im3 = ax3.imshow(cropped_rotated, cmap=LDOS_cmap, origin='lower',
-                     vmin=vmin_map, vmax=vmax_map, aspect='equal')
-    ax3.axvline(x=width_px // 2, color='white', linestyle='--', lw=1)
-    #ax3.set_title(f"Cropped Rotated LDOS (width = {width_nm} nm)")
-    # 5. 결과 반환
+    # (3) Cropped & Rotated
+    vmin_crop, vmax_crop = np.nanpercentile(cropped, ZBCM_perc)
+    im3 = ax3.imshow(cropped, cmap=LDOS_cmap, origin='lower',
+                     vmin=vmin_crop, vmax=vmax_crop, aspect='equal')
+    ax3.axvline(x=width_px//2, color='white', linestyle='--', lw=1)
+    ax3.set_title("Cropped & Rotated Region")
+    fig.colorbar(im3, ax=ax3, orientation='vertical',
+                 fraction=0.035, pad=0.01, shrink=1.0, label='LDOS')
+
+    # ─── 5. 결과 반환 ───────────────────────────────────────────────
     interpolated_ds = xr.Dataset(
-        {"LDOS_interpolated": (["distance", "bias_mV"], profile)},
+        {"LDOS_interpolated": (["distance","bias_mV"], profile)},
         coords={"distance": proj_dist, "bias_mV": bias_vals}
     )
-
     return fig, interpolated_ds
 
+# -
 
 
-fig, interpolated_ds1 = plot_LDOS_map_and_profile_v3(
+
+
+# +
+fig1, interpolated_ds1 = plot_LDOS_map_and_profile_v3(
     updated_GS_LDOS_0T002_N_2T003,
     selected_points,
     ch='LDOS',
     bias_mV_ref=0.0,
-    ZBCM_perc=(0, 98),
-    LP_perc=(0, 65),
+    ZBCM_perc=(0, 99),
+    LP_perc=(0, 30),
+    LDOS_cmap='Blues', line_cmap='magma',
     scalebar_length_nm=20,
     scalebar_color='white',
     line_width_px=1,           # 또는 1
     width_nm=10                # crop용 rectangle 너비
 )
-fig, interpolated_ds2 = plot_LDOS_map_and_profile_v3(
+
+
+fig1.savefig('cropped_area_0T_1.svg', format='svg')
+fig1.savefig('cropped_area_0T_1.png', format='png', dpi=600)
+
+
+
+fig2, interpolated_ds2 = plot_LDOS_map_and_profile_v3(
     GS_LDOS_2T_003,
     selected_points,
     ch='LDOS',
     bias_mV_ref=0.0,
-    ZBCM_perc=(0, 98),
-    LP_perc=(0, 65),
+    ZBCM_perc=(0, 99),
+    LP_perc=(0, 99),
+    LDOS_cmap='viridis', line_cmap='magma',
     scalebar_length_nm=20,
     scalebar_color='white',
     line_width_px=1,           # 또는 1
     width_nm=10                # crop용 rectangle 너비
 )
 
-fig
 
+fig2.savefig('cropped_area_2T_1.svg', format='svg')
+fig2.savefig('cropped_area_2T_1.png', format='png', dpi=600)
+# -
+
+fig2
 
 interpolated_ds1_cleaned = interpolated_ds1.dropna(dim='bias_mV', how='any')
 interpolated_ds2_cleaned = interpolated_ds2.dropna(dim='bias_mV', how='any')
 
+
+
+
+
+# + editable=true slideshow={"slide_type": ""}
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_interpolated_profiles(interpolated_ds, offset=None, skip=1, show_dots=True):
+    """
+    Plots the interpolated LDOS profiles with bias_mV as the x-axis and distance as the y-axis (in nm).
+    
+    Parameters:
+    - interpolated_ds (xr.Dataset): The xarray dataset containing the interpolated LDOS data.
+    - offset (float or None): The vertical offset between each profile. If None, automatically determined.
+    - skip (int): The number of profiles to skip between plotted profiles. Default is 1 (no skipping).
+    - show_dots (bool): Whether to show the dots on the right side of the plot. Default is True.
+    """
+
+    try:
+        # Extract necessary values from the dataset
+        bias_mV = interpolated_ds['bias_mV'].values
+        distance = interpolated_ds['distance'].values * 1e3  # Convert units to nm
+        ldos_interpolated = interpolated_ds['LDOS_interpolated'].values
+
+        # Print the array shapes for debugging purposes
+        print(f'distance shape: {distance.shape}')
+        print(f'ldos_interpolated shape: {ldos_interpolated.shape}')
+
+        # Transpose ldos_interpolated if its shape is not (distance, bias_mV)
+        if ldos_interpolated.shape[0] != len(distance):
+            ldos_interpolated = ldos_interpolated.T
+            print(f'ldos_interpolated transposed shape: {ldos_interpolated.shape}')
+
+        # Determine the offset if not provided
+        if offset is None:
+            offset = (ldos_interpolated.max() - ldos_interpolated.min()) * 0.1  # 10% of the data range
+
+        # Validate that the number of distance values matches the number of profiles
+        if ldos_interpolated.shape[0] != len(distance):
+            raise ValueError("The number of distance values does not match the number of profiles.")
+
+        # Create the plot
+        fig, ax = plt.subplots(figsize=(4, 6))  # Reduced size by half
+
+        # Set up the colormap
+        norm = plt.Normalize(vmin=distance.min(), vmax=distance.max())
+        cmap = plt.get_cmap('magma')
+
+        # Plot every `skip`-th profile
+        for i in range(0, ldos_interpolated.shape[0], skip):
+            # Plot each profile with an offset
+            color = cmap(norm(distance[i]))  # Use distance for consistent color assignment
+            ax.plot(bias_mV, ldos_interpolated[i, :] + i * offset, color=color)
+            
+            if show_dots:
+                # Add a circle marker at the start of each profile line to indicate the data point location
+                ax.plot(bias_mV[0], ldos_interpolated[i, 0] + i * offset,
+                        marker='o', color=color, markersize=8)
+
+        # Add labels and title
+        ax.set_xlabel('Bias (mV)')
+        ax.set_ylabel('LDOS')
+        ax.set_title('LDOS Line Profiles')
+
+        # Add a semi-transparent gray dashed line at bias_mV = 0
+        ax.axvline(x=0, color='gray', linestyle='--', alpha=0.2)
+
+        # Remove grid
+        ax.grid(False)
+
+        # Show the plot
+        plt.show()
+
+    except KeyError as e:
+        print(f"KeyError: The specified key '{e.args[0]}' was not found in the dataset. Please check the dataset structure.")
+    except ValueError as e:
+        print(f"ValueError: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+    return fig
+
+
+
 # +
 #interpolated_ds
-fig = plot_interpolated_profiles(interpolated_ds1_cleaned, offset=4E-11, skip=1, show_dots=False)
+fig1 = plot_interpolated_profiles(interpolated_ds1_cleaned, offset=4E-11, skip=1, show_dots=False)
 #fig.savefig('LDOS_lineprofile2.svg')
 
-# in case of bias range zoom '''
-interpolated_ds1_cleaned_bias_zm = interpolated_ds1_cleaned.where((
+
+fig1.savefig('LDOS_lineprofile_0T_1.svg', format='svg')
+fig1.savefig('LDOS_lineprofile_0T_1.png', format='png', dpi=600)
+
+
+
+# in case of bias range zoom 
+'''interpolated_ds1_cleaned_bias_zm = interpolated_ds1_cleaned.where((
     interpolated_ds1_cleaned.bias_mV>-2.4)&(
-        interpolated_ds1_cleaned.bias_mV<2.4),drop=True)
-'''
+        interpolated_ds1_cleaned.bias_mV<2.4),drop=True)'''
 #interpolated_ds
+'''
 fig = plot_interpolated_profiles(interpolated_ds1_cleaned_bias_zm,
                                  offset=2E-9,
                                  skip=4,
@@ -3595,8 +4331,11 @@ fig = plot_interpolated_profiles(interpolated_ds1_cleaned_bias_zm,
 '''
 
 #interpolated_ds
-fig = plot_interpolated_profiles(interpolated_ds2_cleaned, offset=2E-11, skip=2, show_dots=False)
+fig2 = plot_interpolated_profiles(interpolated_ds2_cleaned, offset=6E-11, skip=1, show_dots=False)
 #fig.savefig('LDOS_lineprofile2.svg')
+fig2.savefig('LDOS_lineprofile_2T_1.svg', format='svg')
+fig2.savefig('LDOS_lineprofile_2T_1.png', format='png', dpi=600)
+
 
 # -
 
@@ -3606,6 +4345,7 @@ fig = plot_interpolated_line_profiles_image(interpolated_ds1_cleaned, interpolat
 # * updated_GS_topo_0T_002  or  GS_topo_2T_003
 # * grid_LDOS = updated_GS_topo_0T_002.copy()
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ## use the updated 0T data for further analysis of grid_LDOS & grid_topo
 
 # +
@@ -3657,6 +4397,7 @@ plt.show()
 #
 # * [**Flattening and Drift Compensation**](Flattening-and-Drift-Compensation)
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ### Slicing (Holoview: X, Y, bias_mV) 
 #
 # * back to [**Grid Analysis**](**Grid_Analysis** )
@@ -3875,11 +4616,12 @@ def plot_find_peaks_pdSeries(series, prominence=0.01, width=None):
 topo_correlations_pks_prprts, fig = plot_find_peaks_pdSeries(topo_correlations, prominence=1E-12, width=1E-7)
 #print(topo_correlations_pks_prprts)
 plt.show()
-# -
 
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ### plot line STS 
 #
+# -
 
 # #### STS curve at XY point using slider 
 # * slider X&Y setting
@@ -3930,6 +4672,7 @@ plot_XYsliced_grid_images_with_LDOS_lines(grid_LDOS, number_of_XYslice=11, slici
                                            use_individual_vlimits=True, bias_mV_Vline_guide=[-2,-1, 0, 1, 2],
                                            ch='LDOS', bias_mV_ref=0, line_alpha= 0.5)
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ### plot Detection and Derivatives 
 #
 #
@@ -4001,7 +4744,9 @@ zero_bias_map = grid_LDOS.where( (grid_LDOS.bias_mV <0.051)&( grid_LDOS.bias_mV 
 #zero_bias_map.attrs = grid_LDOS.attrs
 
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ### Delunary triangulations 
+# -
 
 # #### Threshold solutions for bianry image 
 
@@ -4033,8 +4778,8 @@ binary_image = create_binary_image(plane_fit_surface_xr(zero_bias_map).LDOS.valu
 
 # +
 #binary_image
-# -
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ### Delunary triangulations 
 
 # +
@@ -4096,13 +4841,14 @@ memory_info = process.memory_info()
 
 print(f"RSS: {memory_info.rss / 1024 ** 2:.2f} MB")  # Resident Set Size (actual memory usage)
 print(f"VMS: {memory_info.vms / 1024 ** 2:.2f} MB")  # Virtual Memory Size
-# -
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ## 2D FFT & Quasi Particle Interferance
 #
 #
 # * back to [**Preparation**](#Preparation)
 # * back to [**Grid_Analysis**](**Grid_Analysis** )
+# -
 
 # ### 2D FFT 
 # * using "twoD_FFT_xr" for grid_LDOS_fff
@@ -4327,8 +5073,8 @@ grid_LDOS
 # +
 
 
-# 원 그리기
-x0, y0 = (0,0)  # 튜플 언패킹
+# Draw circle
+x0, y0 = (0,0)  # Tuple unpacking
 diameter =   2  *   (1E9* 1/grid_LDOS.ref_a0nm ) # hv.ellipse use the diameter not radius
 diameter_1_2 =   1  *   (1E9* 1/grid_LDOS.ref_a0nm ) # hv.ellipse use the diameter not radius
 diameter_1_4 =   0.5  *   (1E9* 1/grid_LDOS.ref_a0nm ) # hv.ellipse use the diameter not radius
@@ -4340,8 +5086,8 @@ circle_1_4 = hv.Ellipse(x0, y0, diameter_1_4).opts(color='black', line_width=1,l
 circle_1_8 = hv.Ellipse(x0, y0, diameter_1_8).opts(color='black', line_width=1,line_dash='dashed',  alpha =1)
 
 hv.extension('bokeh')
-fft_bias_mV_slicing_0 * circle  # 원을 이미지에 겹치기
-fft_bias_mV_slicing_0 * circle *circle_1_2*circle_1_4*circle_1_8  # 원을 이미지에 겹치기
+fft_bias_mV_slicing_0 * circle  # Overlay circle on image
+fft_bias_mV_slicing_0 * circle *circle_1_2*circle_1_4*circle_1_8  # Overlay circle on image
 # -
 
 
@@ -4355,7 +5101,7 @@ grid_LDOS
 #fft_XY_slicing_0
 bragg_q0=  1  *   (1E9* 1/grid_LDOS.ref_a0nm )# r 6
 
-# 수직 가이드 라인 추가
+# Add vertical guide line
 q0vlinePos = hv.VLine(bragg_q0).opts(color='red', line_width=2, line_dash='dashed', alpha = 0.5 )
 q0vlineNeg = hv.VLine(-bragg_q0).opts(color='red', line_width=2, line_dash='dashed', alpha = 0.5)
 
@@ -4779,7 +5525,7 @@ fft_XY_slicing_crop = hv_fft_XY_slicing(np.log10( filter_gaussian_xr( grid_LDOS_
 
 bragg_q0=  1  *   (1E9* 1/grid_LDOS.ref_a0nm ) 
 
-# 수직 가이드 라인 추가
+# Add vertical guide line
 
 zerovlinePos = hv.VLine(0).opts(color='black', line_width=2, line_dash='solid', alpha = 0.5 )
 
@@ -4982,7 +5728,9 @@ plt.show()
 
 
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # # Peak detection  , Whole Range, InGapRange
+# -
 
 # ### including SC gap. whole area 
 #
@@ -5019,13 +5767,13 @@ updated_GS_LDOS_0T_002
 #GS_LDOS_2T_003
 #GS_LDOS_2T_003
 
-grid_topo = updated_GS_topo_0T_002.copy()#
+#grid_topo = updated_GS_topo_0T_002.copy()#
 #grid_topo = GS_topo_2T_005.copy()
 #grid_LDOS = updated_GS_LDOS_0T_002[['LDOS']].copy()
-grid_LDOS = updated_GS_LDOS_0T_002[['LDOS_smoothed']].copy()
+#grid_LDOS = updated_GS_LDOS_0T_002[['LDOS_smoothed']].copy()
 
 
-#grid_topo = GS_topo_2T_003.copy()
+grid_topo = GS_topo_2T_003.copy()
 #GS_LDOS_2T_003
 
 
@@ -5033,8 +5781,8 @@ grid_LDOS = updated_GS_LDOS_0T_002[['LDOS_smoothed']].copy()
 #grid_LDOS = GS_LDOS_2T_005[['LDOS_smoothed']].copy()
 
 
-#grid_LDOS = GS_LDOS_2T_003[['LDOS']].copy()
-#grid_LDOS = GS_LDOS_2T_003[['LDOS_smoothed']].copy()
+grid_LDOS = GS_LDOS_2T_003[['LDOS']].copy()
+grid_LDOS = GS_LDOS_2T_003[['LDOS_smoothed']].copy()
 
 # use the LDOS smooth? 
 grid_LDOS = grid_LDOS.rename({'LDOS_smoothed': 'LDOS'})
@@ -5044,7 +5792,8 @@ grid_LDOS = grid_LDOS.rename({'LDOS_smoothed': 'LDOS'})
 
 grid_LDOS
 
-# ## +- 0.8mV range fitting
+# ## ~~+- 0.8mV range fitting~~
+# ## +- 0.75mV range fitting
 
 # +
 grid_LDOS_SnD = smoothing_and_deriv_LDOS(
@@ -5294,11 +6043,18 @@ plt.show()
 #grid_LDOS_SnD_pks.to_netcdf('grid_LDOS_SnD_pks_0T002_WholeRange.nc')
 grid_LDOS_SnD_pks.to_netcdf('grid_LDOS_SnD_pks_2T003_750uV_0628.nc')
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
+# ## open grid_LDOS_SnD_pks dataset 
+
+# +
+grid_LDOS_SnD_pks =  xr.open_dataset('grid_LDOS_SnD_pks_2T003_750uV_0628.nc')
+
 #grid_LDOS_SnD_pks = xr.open_dataset('grid_LDOS_SnD_pks_2T003_800uV_0416.nc')
 # -
 
 grid_LDOS_SnD_pks#.data_vars
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ### interactive fitting test 
 
 # +
@@ -5465,7 +6221,9 @@ interactive_fitting(grid_LDOS_SnD_pks)
 
 
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ## multi peak fitting for single XY 
+# -
 
 '''
 import numpy as np
@@ -5993,7 +6751,7 @@ def multi_peak_IGS_fitting_singleXY(
     ds_out.attrs['debug_param_count']   = 1 + 3*n_peaks_after
 
     return ds_out
-    '''
+'''
 
 
 # +
@@ -6155,9 +6913,11 @@ def plot_singleXY_fitting_result_from_dsout(ds_out, ds):
 
 plot_singleXY_fitting_result_from_dsout(grid_LDOS_SnD_pks_fit_singleP, grid_LDOS_SnD_pks)
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Region fitting with ZB mask
 # ### No parallel computing 
 # * use the for loop
+# -
 
 # ####  grid_LDOS_SnD_pks crop area test
 
@@ -6658,7 +7418,9 @@ plot_region_fitting_result_from_dsout(ds_out= grid_LDOS_SnD_pks_crop_results, ds
 
 grid_LDOS_SnD_pks_crop_results
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # # parallel computing  full range 
+# -
 
 
 grid_LDOS_SnD_pks_results = multi_peak_IGS_fitting_region_parallel(
@@ -6682,9 +7444,17 @@ plot_region_fitting_result_from_dsout(ds_out= grid_LDOS_SnD_pks_results, ds=grid
 grid_LDOS_SnD_pks_results.to_netcdf('grid_LDOS_SnD_pks_2T003_mask_fit_750uVRange_LGV_0629.nc')
 
 
+# ###  open grid_LDOS_SnD_pks_results
+
+# +
+
+grid_LDOS_SnD_pks_results= xr.open_dataset('grid_LDOS_SnD_pks_2T003_mask_fit_750uVRange_LGV_0629.nc')
+
 # +
 #grid_LDOS_SnD_pks_results= xr.open_dataset('grid_LDOS_SnD_pks_2T005_mask_fit_800uVRange_LGV_0522.nc')
 # -
+
+
 
 grid_LDOS_SnD_pks_results
 
@@ -6931,6 +7701,245 @@ def plot_region_fitting_result_from_dsout(
 
 
 
+
+# +
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import xarray as xr
+from lmfit.models import LorentzianModel, GaussianModel, VoigtModel, ConstantModel
+from functools import reduce
+
+def plot_region_fitting_result_from_dsout(
+        ds_out, ds,
+        model_type=None,
+        allowed_models=['Lorentzian', 'Gaussian', 'Voigt'],
+        y_idx=None, x_idx=None,
+        weight_function_show=False,
+        use_zb_mask=False,
+        zb_mask_key='ZB_mask',
+        show_shade=True,
+        return_fig=False):
+    """
+    Reconstruct and plot the best-fit curve for a selected pixel,
+    including optional CdGM level proximity shading and guide lines,
+    and collect all curves into a pandas DataFrame.
+
+    Parameters
+    ----------
+    ds_out : xarray.Dataset
+        Fitting output with dims (Y, X, peak) and variables:
+          - peak_center, peak_amplitude, peak_sigma, redchi
+          - optional: background_value, model_type, ZB_mask, level_proximity
+          - attrs: weight_sigma, Ef, SCgap
+    ds : xarray.Dataset
+        Contains 'bias_mV' and 'LDOS_smoothed' with dims (Y, X, bias_mV).
+    model_type : None | str
+        If None, per-pixel model from ds_out['model_type'] is used.
+        If str, forces a fixed model for all pixels (must be in allowed_models).
+    allowed_models : list of str
+        Supported model types when model_type=None.
+    y_idx, x_idx : int, optional
+        Pixel indices. If None and use_zb_mask=True, picks a random valid pixel.
+    weight_function_show : bool
+        If True, also plot convoluted fit and weight function.
+    use_zb_mask : bool
+        If True, applies ZB_mask to bias axis selection.
+    zb_mask_key : str
+        Name of mask variable in ds_out for zero-bias filtering.
+    show_shade : bool
+        If True, plots CdGM level proximity shading and guide lines.
+    return_fig : bool
+        If True, returns (fig, df). Otherwise shows the plot and returns df.
+
+    Returns
+    -------
+    df : pandas.DataFrame
+        DataFrame indexed by bias_mV, with columns:
+          - 'LDOS_smoothed', 'best_fit', each 'peak{i}', 'bkg' if present
+          - 'convoluted_fit', 'weight_function' if weight_function_show=True
+    fig : matplotlib.figure.Figure, optional
+        If return_fig=True, also returns the Figure object.
+
+    Notes
+    -----
+    - 2025-07-02 update:
+        1. Fixed so that a fallback model is used when model_type is '' or a whitespace-only string.
+        2. Recommend updating the external call example for using try/except inside the loop.
+    """
+    # 1) Determine pixel indices
+    ny, nx = ds_out.dims['Y'], ds_out.dims['X']
+    if use_zb_mask and y_idx is None and x_idx is None and zb_mask_key in ds_out:
+        m = ds_out[zb_mask_key].values
+        valid_mask = np.any(~np.isnan(m), axis=2) if m.ndim == 3 else m.astype(bool)
+        rc = ds_out['redchi'].values
+        valid_fit = ~np.isnan(rc)
+        ys, xs = np.where(valid_mask & valid_fit)
+        if len(ys) == 0:
+            raise RuntimeError("No valid pixel found with ZB mask and redchi")
+        idx = np.random.randint(len(ys))
+        y_idx, x_idx = int(ys[idx]), int(xs[idx])
+    if y_idx is None:
+        y_idx = np.random.randint(ny)
+    if x_idx is None:
+        x_idx = np.random.randint(nx)
+
+    print(f"Using pixel Y={y_idx}, X={x_idx} for plotting")
+
+    # 2) Extract raw data for this pixel
+    bias = ds['bias_mV'].values
+    ldos = ds['LDOS_smoothed'].isel(Y=y_idx, X=x_idx).values
+
+    # 3) Decide which model to use with fallback
+    if model_type is None:
+        raw_model = ds_out['model_type'].isel(Y=y_idx, X=x_idx).item()
+        if not isinstance(raw_model, str) or raw_model.strip() == "":
+            chosen = allowed_models[0]
+            print(f"Warning: model_type at pixel Y={y_idx}, X={x_idx} is missing or invalid; defaulting to '{chosen}' model.")
+        else:
+            chosen = raw_model.capitalize()
+    else:
+        chosen = model_type.capitalize()
+    if chosen not in allowed_models:
+        raise ValueError(f"Model '{chosen}' not supported. Choose from {allowed_models}.")
+
+    # 4) Map model name to lmfit class & color
+    if chosen == 'Lorentzian':
+        mc, fit_color = LorentzianModel, 'r'
+    elif chosen == 'Gaussian':
+        mc, fit_color = GaussianModel,   'b'
+    else:
+        mc, fit_color = VoigtModel,      'g'
+
+    # 5) Build mask on bias axis if requested
+    mask = np.ones_like(bias, bool)
+    if use_zb_mask and zb_mask_key in ds_out:
+        raw = ds_out[zb_mask_key].isel(Y=y_idx, X=x_idx).values
+        if isinstance(raw, np.ndarray) and raw.shape == bias.shape:
+            mask = ~np.isnan(raw) if np.issubdtype(raw.dtype, np.floating) else raw.astype(bool)
+        elif np.ndim(raw) == 0:
+            mask = np.full_like(bias, bool(raw), bool)
+    mask = mask.astype(bool)
+
+    # 6) Load and filter peak parameters
+    redchi  = ds_out['redchi'].isel(Y=y_idx, X=x_idx).item()
+    n_peaks = ds_out.dims['peak']
+    centers = ds_out['peak_center'].isel(Y=y_idx, X=x_idx).values
+    amps    = ds_out['peak_amplitude'].isel(Y=y_idx, X=x_idx).values
+    sigmas  = ds_out['peak_sigma'].isel(Y=y_idx, X=x_idx).values
+    idxs = [i for i in range(n_peaks)
+            if not (np.isnan(centers[i]) or np.isnan(amps[i]) or np.isnan(sigmas[i]))]
+    print("Valid peak indices:", idxs)
+
+    # 7) Construct composite model
+    models = []
+    if 'background_value' in ds_out:
+        models.append(ConstantModel(prefix='bkg_'))
+        bgv = ds_out['background_value'].isel(Y=y_idx, X=x_idx).item()
+    for i in idxs:
+        models.append(mc(prefix=f'peak{i}_'))
+    comp = reduce(lambda a, b: a + b, models)
+    params = comp.make_params()
+    if 'background_value' in ds_out:
+        params['bkg_c'].set(value=bgv)
+    for i in idxs:
+        params[f'peak{i}_center'].set(value=centers[i])
+        params[f'peak{i}_amplitude'].set(value=amps[i])
+        params[f'peak{i}_sigma'].set(value=sigmas[i])
+
+    # 8) Evaluate fit and components
+    best_fit   = comp.eval(params=params, x=bias)
+    comps_vals = comp.eval_components(params=params, x=bias)
+
+    # 9) Optional convolution with weight function
+    if weight_function_show:
+        wsig = ds_out.attrs.get('weight_sigma', 1.0)
+        wfunc = np.exp(-bias**2 / (2 * wsig**2))
+        conv = np.convolve(best_fit, wfunc, mode='same') / np.sum(wfunc)
+
+    # 10) Plotting
+    fig, ax = plt.subplots(figsize=(7,5))
+    ax.plot(bias, ldos, 'k-', lw=1.5, alpha=0.8, label='LDOS_smoothed', zorder=1)
+    ax.plot(bias, best_fit, fit_color+'-', lw=4, alpha=1.0,
+            label=f"{chosen} Fit (redchi={redchi:.2e})", zorder=10)
+
+    # Shade CdGM levels if requested
+    if show_shade and 'level_proximity' in ds_out:
+        level_prox = ds_out['level_proximity'].isel(Y=y_idx, X=x_idx).values
+        Ef_val = ds_out.attrs.get('Ef', 4.4)
+        SCgap = ds_out.attrs.get('SCgap', 1.8)
+        E_mu = (SCgap**2) / Ef_val
+        for i in idxs:
+            lp = level_prox[i]
+            if not np.isnan(lp) and abs(lp) < SCgap:
+                if lp == 0:
+                    lc, ls, fill = 'gray', '-', True
+                else:
+                    frac = abs((lp / E_mu) % 1)
+                    frac = 1 - frac if frac>0.5 else frac
+                    if np.isclose(frac,0,atol=1e-2): lc, ls, fill = 'cyan', '--', True
+                    elif np.isclose(frac,0.5,atol=1e-2): lc, ls, fill = 'magenta', '--', True
+                    else: lc, ls, fill = 'gray', '--', False
+                ax.axvline(lp, color=lc, linestyle=ls, linewidth=1)
+                if fill:
+                    ax.fill_between(bias, comps_vals[f'peak{i}_'], color=lc, alpha=0.3)
+        cand = []
+        n_min = int(np.floor(bias.min()/E_mu)); n_max = int(np.ceil(bias.max()/E_mu))
+        for n in range(n_min, n_max+1):
+            for lvl in [n*E_mu, (n+0.5)*E_mu]:
+                if abs(lvl) < SCgap: cand.append(lvl)
+        for lvl in sorted(cand):
+            frac = abs((lvl/E_mu)%1)
+            frac = 1 - frac if frac>0.5 else frac
+            col = 'cyan' if np.isclose(frac,0,atol=1e-2) else 'magenta'
+            ax.axvline(lvl, color=col, ls='--', lw=1,
+                       label=('Integer CdGM Level' if col=='cyan' else 'Half-Integer CdGM Level'))
+
+    if weight_function_show:
+        ax.plot(bias, conv, fit_color+'-', lw=3, alpha=0.8, label='Convoluted Fit', zorder=9)
+        ax2 = ax.twinx()
+        ax2.plot(bias, wfunc, '--', lw=1.5, alpha=0.5, color='gray', label='Weight Function')
+        ax2.set_ylabel('Weight Function', color='gray')
+
+    for i in idxs:
+        arr = comps_vals[f'peak{i}_']
+        ax.plot(bias, arr, '--', lw=1.5, alpha=0.4, label=f'Peak {i}', zorder=2)
+    if 'bkg_' in comps_vals:
+        ax.plot(bias, comps_vals['bkg_'], '--', lw=1.5, alpha=0.4, color='gray', label='Background', zorder=2)
+
+    ax.axvline(0, color='gray', ls='-', lw=1)
+    ax.set_xlabel('Bias (mV)')
+    ax.set_ylabel('LDOS_smoothed')
+
+    y_phys = ds_out['Y'].isel(Y=y_idx).item()*1e9
+    x_phys = ds_out['X'].isel(X=x_idx).item()*1e9
+    ax.set_title(f'Y_idx={y_idx}, X_idx={x_idx}, model={chosen}\n'
+                 f'Y={y_phys:.2f} nm, X={x_phys:.2f} nm', fontsize=10)
+
+    if weight_function_show:
+        h1,l1 = ax.get_legend_handles_labels(); h2,l2 = ax2.get_legend_handles_labels()
+        ax.legend(h1+h2, l1+l2, loc='upper left')
+    else:
+        ax.legend(loc='best')
+    plt.tight_layout()
+
+    data = {'LDOS_smoothed': ldos, 'best_fit': best_fit}
+    for name, arr in comps_vals.items():
+        data[name.rstrip('_')] = arr
+    if weight_function_show:
+        data['convoluted_fit'] = conv
+        data['weight_function'] = wfunc
+    df = pd.DataFrame(data, index=bias)
+    df.index.name = 'bias_mV'
+
+    if return_fig:
+        return fig, df
+    else:
+        plt.show()
+        return df
+
+
+
 # -
 
 fig,_ = plot_region_fitting_result_from_dsout(ds_out= grid_LDOS_SnD_pks_results, ds=grid_LDOS_SnD_pks,
@@ -6945,23 +7954,32 @@ fig,_ = plot_region_fitting_result_from_dsout(ds_out= grid_LDOS_SnD_pks_results,
                                             weight_function_show=False, 
                                             use_zb_mask=True,
                                             #y_idx=14, x_idx=19,
-                                              #y_idx=104, x_idx=149,
+                                              y_idx=119, x_idx=14,
                                               show_shade=False,
                                             return_fig=True)#,model_type='Gaussian')#model_type='Gaussian',  #model_type='Lorentzian')#, 
-fig
+#fig
 
 
 
 
 
-# ## export graph & data fro Dr. shin
+# ## export graph & data FOR Figure2
+
+grid_LDOS_SnD_pks = xr.open_dataset('grid_LDOS_SnD_pks_2T003_750uV_0628.nc')
+
+
+# +
+grid_LDOS_SnD_pks_results=ds_opt2.copy()
+
+grid_LDOS_SnD_pks_results
+grid_LDOS_SnD_pks
 
 # +
 import matplotlib.pyplot as plt
 
 # 1) 좌표 리스트
 # for 2T 003
-'''select_coords = [
+select_coords = [
     (24, 50),
     (29, 152),
     (53, 97),
@@ -6972,7 +7990,7 @@ import matplotlib.pyplot as plt
     (145, 99)
 ]
 '''
-# for 2T 003
+# for 2T 005
 select_coords = [
     (24, 50),
     (14, 49),
@@ -6980,6 +7998,8 @@ select_coords = [
     (31, 18),
     (45, 59)
 ]
+
+'''
 # 2) Y값 기준으로 위→아래 정렬 및 번호 매기기
 sorted_coords = sorted(select_coords, key=lambda yx: yx[0])
 numbers = list(range(1, len(sorted_coords) + 1))
@@ -7026,7 +8046,7 @@ import matplotlib.pyplot as plt
 
 # 1) 저장할 좌표 리스트
 # for 2T 003
-'''select_coords = [
+select_coords = [
     (24, 50),
     (29, 152),
     (53, 97),
@@ -7037,7 +8057,7 @@ import matplotlib.pyplot as plt
     (145, 99)
 ]
 '''
-# for 2T 003
+# for 2T 005
 select_coords = [
     (24, 50),
     (14, 49),
@@ -7045,7 +8065,7 @@ select_coords = [
     (31, 18),
     (45, 59)
 ]
-
+'''
 
 # 2) 순회하면서 그림과 DataFrame 생성·저장
 for idx, (y, x) in enumerate(select_coords, start=1):
@@ -7069,7 +8089,7 @@ for idx, (y, x) in enumerate(select_coords, start=1):
     plt.show()
     
     # d) CSV로 DataFrame 저장
-    df.to_csv(f"df_{label}.csv", index=True)
+    #df.to_csv(f"df_{label}.csv", index=True)
     
     # e) 메모리 해제
     plt.close(fig)
@@ -7243,6 +8263,16 @@ plot_fitting_result_facet_grid(grid_LDOS_SnD_pks_results,#.sel( X = slice(0.5E-7
                                    show_legend=True,
                                    share_xy=False,show_shapes=False)
 
+plot_fitting_result_facet_grid(grid_LDOS_SnD_pks_results,#.sel( X = slice(0.5E-7,0.7E-7), Y = slice(2.0E-7,2.2E-7)), 
+                              #model_type=['Lorentzian', 'Gaussian', 'Voigt'], 
+                               model_type='Lorentzian', 
+                                   point_list=60, 
+                                   ncol=6, 
+                                   weight_function_show=False,
+                                   ZB_masking=True,
+                                   show_legend=True,
+                                   share_xy=False,show_shapes=False)
+
 
 
 
@@ -7257,15 +8287,17 @@ GS_LDOS_2T_003 = xr.open_dataset('GS_LDOS_2T_003.nc')
 
 #GS_topo_2T_005 = xr.open_dataset('GS_topo_2T_005.nc')
 #GS_LDOS_2T_005 = xr.open_dataset('GS_LDOS_2T_005.nc')
+
+# + [markdown] jp-MarkdownHeadingCollapsed=true
+# ## load fitting results & update fitted_curves
 # -
 
-# ## load fitting results & update fitted_curves
 
 
-
+# +
 #grid_LDOS_SnD_pks_Lorentzian_fit = xr.open_dataset('grid_LDOS_SnD_2T_003_smth_LDOS_L_fit_2mV.nc')
 #grid_LDOS_SnD_pks_fit_results =  xr.open_dataset('grid_LDOS_SnD_pks_updated0T002_fit_gaussian_IngapRange.nc')
-grid_LDOS_SnD_pks_results
+#grid_LDOS_SnD_pks_results
 
 
 # +
@@ -7290,244 +8322,14 @@ ds = xr.open_dataset('grid_2T003_fit.nc')
 
 ds
 
-# +
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import xarray as xr
-from lmfit.models import LorentzianModel, GaussianModel, VoigtModel, ConstantModel
-from functools import reduce
-
-def plot_region_fitting_result_from_dsfit(
-        ds_fit,
-        model_type=None,
-        allowed_models=['Lorentzian', 'Gaussian', 'Voigt'],
-        y_idx=None, x_idx=None,
-        weight_function_show=False,
-        use_zb_mask=False,
-        zb_mask_key='ZB_mask',
-        show_shade=True,
-        show_legend=True,
-        return_fig=False):
-    """
-    Reconstruct and plot the best-fit curve for a selected pixel from a combined dataset,
-    including optional CdGM level proximity and guide lines, and collect all curves into a pandas DataFrame.
-
-    Parameters
-    ----------
-    ds_fit : xarray.Dataset
-        Combined dataset with dims (Y, X, bias_mV, peak) containing:
-          - Variables: 'bias_mV', 'LDOS', 'peak_center', 'peak_amplitude', 'peak_sigma', 'redchi'
-          - Optional: 'background_value', 'model_type', zb_mask_key
-        Attributes: 'weight_sigma', 'Ef', 'SCgap'
-    model_type : {None, str}
-        If None, uses per-pixel model from ds_fit['model_type']; else forces given model.
-    allowed_models : list of str
-    y_idx, x_idx : int
-        Pixel indices.
-    weight_function_show : bool
-    use_zb_mask : bool
-    zb_mask_key : str
-    show_shade : bool
-    show_legend : bool
-        If False, suppress legend display.
-    return_fig : bool
-        If True, return (fig, df); else show plot and return df.
-
-    Returns
-    -------
-    df : pandas.DataFrame
-    fig : matplotlib.figure.Figure, optional
-    """
-    # 1) Determine pixel indices
-    ny, nx = ds_fit.dims['Y'], ds_fit.dims['X']
-    if use_zb_mask and y_idx is None and x_idx is None and zb_mask_key in ds_fit:
-        raw_mask = ds_fit[zb_mask_key].values
-        valid_mask = np.any(~np.isnan(raw_mask), axis=2) if raw_mask.ndim == 3 else raw_mask.astype(bool)
-        rc = ds_fit['redchi'].values
-        valid_fit = ~np.isnan(rc)
-        ys, xs = np.where(valid_mask & valid_fit)
-        if len(ys) == 0:
-            raise RuntimeError("No valid pixel found with ZB mask and redchi")
-        sel = np.random.randint(len(ys))
-        y_idx, x_idx = int(ys[sel]), int(xs[sel])
-    if y_idx is None:
-        y_idx = np.random.randint(ny)
-    if x_idx is None:
-        x_idx = np.random.randint(nx)
-
-    print(f"Using pixel Y={y_idx}, X={x_idx} for plotting")
-
-    # 2) Extract data
-    bias = ds_fit['bias_mV'].values
-    ldos = ds_fit['LDOS'].isel(Y=y_idx, X=x_idx).values
-
-    # 3) Model selection
-    if model_type is None:
-        chosen = ds_fit['model_type'].isel(Y=y_idx, X=x_idx).item().capitalize()
-    else:
-        chosen = model_type.capitalize()
-    if chosen not in allowed_models:
-        raise ValueError(f"Model '{chosen}' not supported. Choose from {allowed_models}.")
-    if chosen == 'Lorentzian':
-        mc, fit_color = LorentzianModel, 'r'
-    elif chosen == 'Gaussian':
-        mc, fit_color = GaussianModel, 'b'
-    else:
-        mc, fit_color = VoigtModel, 'g'
-
-    # 4) Bias mask
-    mask = np.ones_like(bias, bool)
-    if use_zb_mask and zb_mask_key in ds_fit:
-        raw = ds_fit[zb_mask_key].isel(Y=y_idx, X=x_idx).values
-        if isinstance(raw, np.ndarray) and raw.shape == bias.shape:
-            mask = ~np.isnan(raw) if np.issubdtype(raw.dtype, np.floating) else raw.astype(bool)
-        elif np.ndim(raw) == 0:
-            mask = np.full_like(bias, bool(raw), bool)
-
-    # 5) Load fit parameters
-    redchi = ds_fit['redchi'].isel(Y=y_idx, X=x_idx).item()
-    n_peaks = ds_fit.dims['peak']
-    centers = ds_fit['peak_center'].isel(Y=y_idx, X=x_idx).values
-    amps    = ds_fit['peak_amplitude'].isel(Y=y_idx, X=x_idx).values
-    sigmas  = ds_fit['peak_sigma'].isel(Y=y_idx, X=x_idx).values
-    idxs = [i for i in range(n_peaks)
-            if not (np.isnan(centers[i]) or np.isnan(amps[i]) or np.isnan(sigmas[i]))]
-    print("Valid peak indices:", idxs)
-
-    # 6) Construct composite model
-    models = []
-    if 'background_value' in ds_fit:
-        models.append(ConstantModel(prefix='bkg_'))
-        bgv = ds_fit['background_value'].isel(Y=y_idx, X=x_idx).item()
-    for i in idxs:
-        models.append(mc(prefix=f'peak{i}_'))
-    comp = reduce(lambda a, b: a + b, models)
-    params = comp.make_params()
-    if 'background_value' in ds_fit:
-        params['bkg_c'].set(value=bgv)
-    for i in idxs:
-        params[f'peak{i}_center'].set(value=centers[i])
-        params[f'peak{i}_amplitude'].set(value=amps[i])
-        params[f'peak{i}_sigma'].set(value=sigmas[i])
-
-    # 7) Evaluate fit & components
-    best_fit  = comp.eval(params=params, x=bias)
-    comps_vals = comp.eval_components(params=params, x=bias)
-
-    # 8) Optional weight convolution
-    if weight_function_show:
-        wsig = ds_fit.attrs.get('weight_sigma', 1.0)
-        wfunc = np.exp(-bias**2 / (2 * wsig**2))
-        conv = np.convolve(best_fit, wfunc, mode='same') / np.sum(wfunc)
-
-    # 9) Plot
-    fig, ax = plt.subplots(figsize=(7,5))
-    ax.plot(bias, ldos, 'k-', lw=1.5, alpha=0.8, label='LDOS', zorder=1)
-    ax.plot(bias, best_fit, fit_color+'-', lw=4, alpha=1.0,
-            label=f"{chosen} Fit (redchi={redchi:.2e})", zorder=10)
-    if weight_function_show:
-        ax.plot(bias, conv, fit_color+'-', lw=3, alpha=0.8, label='Convoluted Fit', zorder=9)
-        ax2 = ax.twinx()
-        ax2.plot(bias, wfunc, '--', lw=1.5, alpha=0.5, color='gray', label='Weight Function')
-        ax2.set_ylabel('Weight Function', color='gray')
-    for i in idxs:
-        ax.plot(bias, comps_vals[f'peak{i}_'], '--', lw=1.5, alpha=0.4,
-                label=f'Peak {i}', zorder=2)
-    if 'bkg_' in comps_vals:
-        ax.plot(bias, comps_vals['bkg_'], '--', lw=1.5, alpha=0.4,
-                color='gray', label='Background', zorder=2)
-
-    # CdGM levels & shading
-    if show_shade:
-        lvl_prox = ds_fit['level_proximity'].isel(Y=y_idx, X=x_idx).values
-        Ef = ds_fit.attrs.get('Ef', 1.0)
-        SCgap = ds_fit.attrs.get('SCgap', 1.0)
-        E_mu = SCgap**2 / Ef
-        for i in idxs:
-            lp = lvl_prox[i]
-            if not np.isnan(lp) and abs(lp) < SCgap:
-                if lp == 0:
-                    lc, ls, fill = 'gray', '-', True
-                else:
-                    frac = abs((lp/E_mu) % 1)
-                    frac = 1 - frac if frac > 0.5 else frac
-                    if np.isclose(frac, 0, atol=1e-2):
-                        lc, ls, fill = 'cyan', '--', True
-                    elif np.isclose(frac, 0.5, atol=1e-2):
-                        lc, ls, fill = 'magenta', '--', True
-                    else:
-                        lc, ls, fill = 'gray', '--', False
-                ax.axvline(lp, color=lc, linestyle=ls, linewidth=1)
-                if fill:
-                    ax.fill_between(bias, comps_vals[f'peak{i}_'], color=lc, alpha=0.3)
-        cand = []
-        nmin = int(np.floor(bias.min()/E_mu))
-        nmax = int(np.ceil(bias.max()/E_mu))
-        for n in range(nmin, nmax+1):
-            for lvl in (n*E_mu, (n+0.5)*E_mu):
-                if abs(lvl) < SCgap:
-                    cand.append(lvl)
-        for lvl in sorted(cand):
-            frac = abs((lvl/E_mu) % 1)
-            frac = 1 - frac if frac > 0.5 else frac
-            if np.isclose(frac, 0, atol=1e-2):
-                col, lab = 'cyan', 'Integer CdGM Level'
-            elif np.isclose(frac, 0.5, atol=1e-2):
-                col, lab = 'magenta', 'Half-Integer CdGM Level'
-            else:
-                col, lab = 'gray', None
-            ax.axvline(lvl, color=col, ls='--', lw=1, label=lab)
-    else:
-        valid_bias = bias[mask]
-        if valid_bias.size > 0:
-            ax.set_xlim(valid_bias.min(), valid_bias.max())
-
-    ax.axvline(0, color='gray', ls='-', lw=1)
-    ax.set_xlabel('Bias (mV)')
-    ax.set_ylabel('LDOS')
-
-    # Title with pixel indices and physical coordinates
-    y_phys = ds_fit['Y'].isel(Y=y_idx).item() * 1e9
-    x_phys = ds_fit['X'].isel(X=x_idx).item() * 1e9
-    ax.set_title(
-        f'Y_idx={y_idx}, X_idx={x_idx}, model={chosen}\n'
-        f'Y={y_phys:.2f} nm, X={x_phys:.2f} nm',
-        fontsize=10
-    )
-
-    # Legend
-    if show_legend:
-        if weight_function_show:
-            h1, l1 = ax.get_legend_handles_labels()
-            h2, l2 = ax2.get_legend_handles_labels()
-            ax.legend(h1 + h2, l1 + l2, loc='upper left')
-        else:
-            h, l = ax.get_legend_handles_labels()
-            unique = dict(zip(l, h))
-            ax.legend(unique.values(), unique.keys(), loc='best')
-
-    plt.tight_layout()
-
-    # 10) Collect into DataFrame
-    data = {'LDOS': ldos, 'best_fit': best_fit}
-    for name, arr in comps_vals.items():
-        data[name.rstrip('_')] = arr
-    if weight_function_show:
-        data['convoluted_fit'] = conv
-        data['weight_function'] = wfunc
-    df = pd.DataFrame(data, index=bias)
-    df.index.name = 'bias_mV'
-
-    if return_fig:
-        return fig, df
-    else:
-        plt.show()
-        return df
 
 
 
-# -
+
+ds_opt2
+
+
+
 
 fig,_ = plot_region_fitting_result_from_dsfit(ds,use_zb_mask=True,
         zb_mask_key='ZB_mask',
@@ -7609,7 +8411,7 @@ def process_and_plot_fit_results(
     fig, axes = plt.subplots(1, n_plots, figsize=(6 * n_plots, 6))
     if n_plots == 1:
         axes = [axes]
-    plt.suptitle("Fitting Results Validation", fontsize=16)
+    #plt.suptitle("Fitting Results Validation", fontsize=16)
 
     ax_idx = 0
 
@@ -7624,9 +8426,13 @@ def process_and_plot_fit_results(
             dx=1, dy=1,
             units="nm"
         )
+        # show labels & XY
+        '''
         axes[ax_idx].set_title("R² Mapping")
         axes[ax_idx].set_xlabel("X")
         axes[ax_idx].set_ylabel("Y")
+        '''
+        
         ax_idx += 1
 
     # 4. Plot redchi
@@ -7639,9 +8445,13 @@ def process_and_plot_fit_results(
             dx=1, dy=1,
             units="nm"
         )
+        # show labels & XY
+        '''
         axes[ax_idx].set_title("Fit Quality (redchi)")
         axes[ax_idx].set_xlabel("X")
         axes[ax_idx].set_ylabel("Y")
+        '''
+        
         ax_idx += 1
 
     # 5. Plot residuals
@@ -7663,9 +8473,12 @@ def process_and_plot_fit_results(
             dx=1, dy=1,
             units="nm"
         )
+        # show labels & XY
+        '''
         axes[ax_idx].set_title(f"Residuals at {bias[selected_bias_idx]:.4f} mV")
         axes[ax_idx].set_xlabel("X")
         axes[ax_idx].set_ylabel("Y")
+        '''
         ax_idx += 1
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
@@ -7975,7 +8788,7 @@ hv.extension('bokeh')
 
 # Assume `ds` is already loaded as an xarray.Dataset
 #ds = ds.copy()
-ds = ds_cluster.copy()
+#ds = ds_cluster.copy()
 
 # ————— Widgets —————
 bias_slider = pn.widgets.FloatSlider(
@@ -8451,7 +9264,7 @@ def select_labels_in_cluster_interactive(ds: xr.Dataset, callback=None, **kwargs
 
 # ## PCA & KNN clustering 
 
-# +
+'''
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
@@ -8660,6 +9473,263 @@ def cluster_with_pca_knn(
 
     print(f"✅ Done. Added '{var}' to dataset.")
     return ds
+    '''
+
+
+def cluster_with_pca_knn(
+    ds: xr.Dataset,
+    selected_features: list[str] = None,
+    auto_select_best_k: bool = True,
+    k_range: tuple[int,int] = (2,11)
+) -> xr.Dataset:
+    """
+    Perform PCA-based KMeans clustering on ds in-place.
+
+    If selected_features is None, launches interactive feature selection,
+    then re-assigns the updated ds in the callback. Returns ds immediately
+    so that the first call never overwrites it with None.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Input dataset with 'X','Y' coords and 'peak' data_vars.
+    selected_features : list[str], optional
+        Features to use ('X_coordinate','Y_coordinate', or any 'peak' var).
+    auto_select_best_k : bool
+        If True, pick K with highest silhouette score automatically.
+    k_range : tuple(int,int)
+        Range of K to test: [start, end).
+
+    Returns
+    -------
+    xr.Dataset
+        The same ds object, now containing the new cluster variable.
+    """
+    # ——————————————————————————————————————————————————————————————
+    # 0) Interactive feature selection
+    from datetime import datetime
+
+    global selected_features_global
+    try:
+        selected_features_global
+    except NameError:
+        selected_features_global = []
+
+    if not selected_features:
+        def cont(feats):
+            global ds
+            ds = cluster_with_pca_knn(ds, feats, auto_select_best_k, k_range)
+            print("🔄 Features selected; ds has been updated.")
+        select_ML_features_interactive(ds, callback=cont)
+        return ds
+
+    # ——————————————————————————————————————————————————————————————
+    # 1) Build spatial grid
+    x, y = ds['X'].values, ds['Y'].values
+    Xg, Yg = np.meshgrid(x, y)
+    nY, nX = Xg.shape
+    peak_vars = [v for v in ds.data_vars if 'peak' in ds[v].dims]
+    nP = ds[peak_vars[0]].shape[2] if peak_vars else 1
+
+    # 2) Construct feature matrix
+    arrs = []
+    for f in selected_features:
+        if f == 'X_coordinate':
+            a = np.repeat(Xg.flatten()[:, None], nP, axis=1)
+        elif f == 'Y_coordinate':
+            a = np.repeat(Yg.flatten()[:, None], nP, axis=1)
+        else:
+            data = ds[f].values
+            if f == 'peak_amplitude' and 'background_value' in ds:
+                bg = ds['background_value'].values
+                data = data - np.repeat(bg[..., None], data.shape[2], axis=2)
+            a = data.reshape(-1,)
+        arrs.append(a.flatten())
+    A = np.stack(arrs, axis=1)
+
+    # 3) Apply mask
+    if 'ZB_mask' in ds:
+        mask_flat = np.repeat(
+            ds['ZB_mask'].values.astype(bool)[..., None],
+            nP, axis=2
+        ).reshape(-1)
+    else:
+        mask_flat = np.ones(A.shape[0], bool)
+    valid = (~np.isnan(A).any(axis=1)) & mask_flat
+    F = A[valid]
+
+    # 4) PCA transform
+    pca = PCA(n_components=F.shape[1])
+    S = pca.fit_transform(F)
+
+    # 5) Evaluate clustering for each K
+    Ks = list(range(k_range[0], k_range[1]))
+    inertias, silhs = [], []
+    for k in tqdm(Ks, desc='Clustering'):
+        km = KMeans(n_clusters=k, random_state=42).fit(S)
+        inertias.append(km.inertia_)
+        silhs.append(silhouette_score(S, km.labels_))
+
+    # ——————————————————————————————————————————————————————————————
+    # 6) Diagnostic plots and SVG save buttons
+
+    # 6.1 Elbow plot
+    fig_elbow, ax_elbow = plt.subplots(figsize=(6,4))
+    ax_elbow.plot(Ks, inertias, marker='o', linestyle='-')
+    ax_elbow.set_xlabel('K')
+    ax_elbow.set_ylabel('Inertia')
+    ax_elbow.set_title('Elbow Plot (Inertia vs K)')
+    ax_elbow.grid(True)
+    fig_elbow.tight_layout()
+    display(fig_elbow)
+
+    # SVG save UI for elbow plot
+    default_elbow = f"elbow_plot_{datetime.now().strftime('%Y%m%d')}"
+    text_elbow = widgets.Text(value=default_elbow, description='File name:')
+    btn_elbow = widgets.Button(description='Save Elbow SVG', button_style='primary')
+    out_elbow = widgets.Output()
+    def save_elbow(b):
+        out_elbow.clear_output()
+        fname = text_elbow.value.strip() or default_elbow
+        os.makedirs('output_figures', exist_ok=True)
+        path = os.path.join('output_figures', f"{fname}.svg")
+        fig_elbow.savefig(path, format='svg')
+        with out_elbow:
+            print(f"Saved elbow plot to {path}")
+    btn_elbow.on_click(save_elbow)
+    display(widgets.HBox([text_elbow, btn_elbow]), out_elbow)
+
+    # 6.2 Silhouette plot
+    fig_silh, ax_silh = plt.subplots(figsize=(6,4))
+    ax_silh.plot(Ks, silhs, marker='s', linestyle='--')
+    ax_silh.set_xlabel('K')
+    ax_silh.set_ylabel('Silhouette Score')
+    ax_silh.set_title('Silhouette Score vs K')
+    ax_silh.grid(True)
+    fig_silh.tight_layout()
+    display(fig_silh)
+
+    # SVG save UI for silhouette plot
+    default_silh = f"silhouette_plot_{datetime.now().strftime('%Y%m%d')}"
+    text_silh = widgets.Text(value=default_silh, description='File name:')
+    btn_silh = widgets.Button(description='Save Silhouette SVG', button_style='primary')
+    out_silh = widgets.Output()
+    def save_silh(b):
+        out_silh.clear_output()
+        fname = text_silh.value.strip() or default_silh
+        os.makedirs('output_figures', exist_ok=True)
+        path = os.path.join('output_figures', f"{fname}.svg")
+        fig_silh.savefig(path, format='svg')
+        with out_silh:
+            print(f"Saved silhouette plot to {path}")
+    btn_silh.on_click(save_silh)
+    display(widgets.HBox([text_silh, btn_silh]), out_silh)
+
+    # 6.3 PCA explained variance ratio plot
+    fig_pca, ax_pca = plt.subplots(figsize=(6,4))
+    ratios = pca.explained_variance_ratio_
+    ax_pca.plot(range(1, len(ratios)+1), ratios, marker='o', linestyle='-')
+    ax_pca.set_xlabel('Principal Component')
+    ax_pca.set_ylabel('Variance Ratio')
+    ax_pca.set_title('PCA Explained Variance Ratio')
+    ax_pca.grid(True)
+    fig_pca.tight_layout()
+    display(fig_pca)
+
+    # SVG save UI for PCA plot
+    default_pca = f"pca_variance_{datetime.now().strftime('%Y%m%d')}"
+    text_pca = widgets.Text(value=default_pca, description='File name:')
+    btn_pca = widgets.Button(description='Save PCA SVG', button_style='primary')
+    out_pca = widgets.Output()
+    def save_pca(b):
+        out_pca.clear_output()
+        fname2 = text_pca.value.strip() or default_pca
+        os.makedirs('output_figures', exist_ok=True)
+        path2 = os.path.join('output_figures', f"{fname2}.svg")
+        fig_pca.savefig(path2, format='svg')
+        with out_pca:
+            print(f"Saved PCA plot to {path2}")
+    btn_pca.on_click(save_pca)
+    display(widgets.HBox([text_pca, btn_pca]), out_pca)
+
+    # ——————————————————————————————————————————————————————————————
+    # 7) Pick best K
+    if auto_select_best_k:
+        k_best = Ks[int(np.argmax(silhs))]
+        print(f"Selected K = {k_best} (auto)")
+    else:
+        print(f"Ks tested: {Ks}")
+        selector = widgets.Dropdown(
+            options=Ks,
+            description='Select K:',
+            style={'description_width': 'initial'}
+        )
+        confirm_btn = widgets.Button(description='Confirm', button_style='primary')
+        output = widgets.Output()
+        def _on_confirm(_):
+            with output:
+                clear_output()
+                k = selector.value
+                print(f"✅ Selected K = {k}")
+                kmf = KMeans(n_clusters=k, random_state=42).fit(S)
+                labels = np.full(A.shape[0], -1, int)
+                labels[valid] = kmf.labels_
+                C3 = labels.reshape((nY, nX, nP))
+                var = 'cluster_PCA_knn0'; idx = 0
+                while var in ds.data_vars:
+                    idx += 1
+                    var = f'cluster_PCA_knn{idx}'
+                ds[var] = (('Y','X','peak'), C3)
+                ds.attrs['feature_vars_used'] = selected_features
+                # Scatter plot of top PC pairs
+                pairs = sorted(
+                    itertools.combinations(range(pca.n_components_), 2),
+                    key=lambda p: pca.explained_variance_ratio_[p[0]] + pca.explained_variance_ratio_[p[1]],
+                    reverse=True
+                )[:5]
+                plt.figure(figsize=(12,8))
+                for i, (a,b) in enumerate(pairs):
+                    ax = plt.subplot(2,3,i+1)
+                    ax.scatter(S[:,a], S[:,b], c=labels[valid], s=5)
+                    ax.set_xlabel(f'PC{a+1}')
+                    ax.set_ylabel(f'PC{b+1}')
+                    ax.grid(True)
+                plt.tight_layout(); plt.show()
+                print(f"✅ Done. Added '{var}' to dataset.")
+        confirm_btn.on_click(_on_confirm)
+        display(widgets.VBox([selector, confirm_btn, output]))
+        return ds
+
+    # Continue after auto-select
+    print(f"Selected K = {k_best}")
+    kmf = KMeans(n_clusters=k_best, random_state=42).fit(S)
+    labels = np.full(A.shape[0], -1, int)
+    labels[valid] = kmf.labels_
+    C3 = labels.reshape((nY, nX, nP))
+    var = 'cluster_PCA_knn0'; idx = 0
+    while var in ds.data_vars:
+        idx += 1
+        var = f'cluster_PCA_knn{idx}'
+    ds[var] = (('Y','X','peak'), C3)
+    ds.attrs['feature_vars_used'] = selected_features
+    # Scatter plot of top PC pairs
+    pairs = sorted(
+        itertools.combinations(range(pca.n_components_), 2),
+        key=lambda p: pca.explained_variance_ratio_[p[0]] + pca.explained_variance_ratio_[p[1]],
+        reverse=True
+    )[:5]
+    plt.figure(figsize=(12,8))
+    for i, (a,b) in enumerate(pairs):
+        ax = plt.subplot(2,3,i+1)
+        ax.scatter(S[:,a], S[:,b], c=labels[valid], s=5)
+        ax.set_xlabel(f'PC{a+1}')
+        ax.set_ylabel(f'PC{b+1}')
+        ax.grid(True)
+    plt.tight_layout(); plt.show()
+    print(f"✅ Done. Added '{var}' to dataset.")
+    return ds
+
+
 
 
 # +
@@ -8884,7 +9954,204 @@ def plot_cluster_statistics(
         # If ipywidgets is not available, silently skip the button
         pass
 
+# +
+import os
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import xarray as xr
+import matplotlib.pyplot as plt
+from lmfit.models import LorentzianModel, GaussianModel, VoigtModel
+
+def plot_cluster_statistics_avg_plot_only(
+    ds: xr.Dataset,
+    cluster_var: str = None,
+    clusters_to_keep: list[int] = None,
+    model_type: str = None,
+    remove_background: bool = False,
+    remove_neg_amp: bool = False,
+    remove_outliers: bool = False,
+    single_plot: bool = True,
+    sharexy: bool = True
+) -> None:
+    """
+    Interactive visualization of peak statistics by cluster.
+    - If single_plot=True: overlays each cluster's mean peak curve ±95% CI in one figure.
+    - If single_plot=False: plots each cluster's mean curve ±CI in its own subplot,
+      arranged in a grid of 4 columns.
+    sharexy controls whether subplots share both x and y axes (True) or not (False).
+    Y-axis is labeled as 'LDOS', and the legend (for overlay) is placed outside.
+    """
+    global selected_cluster_var_global, selected_cluster_labels_global
+    selected_cluster_var_global = globals().get('selected_cluster_var_global', None)
+    selected_cluster_labels_global = globals().get('selected_cluster_labels_global', None)
+
+    # Stage 1: select the cluster variable
+    if cluster_var is None:
+        def _on_var(var):
+            print(f"Selected cluster variable: {var}")
+            plot_cluster_statistics_avg_plot_only(
+                ds, var, None, model_type,
+                remove_background, remove_neg_amp, remove_outliers,
+                single_plot, sharexy
+            )
+        select_cluster_data_var_interactive(ds, callback=_on_var)
+        return
+
+    # Stage 2: select which clusters to keep
+    if clusters_to_keep is None:
+        def _on_labels(filtered_ds, cluster_var, clusters_to_keep, **kwargs):
+            print(f"Selected labels: {clusters_to_keep}")
+            plot_cluster_statistics_avg_plot_only(
+                filtered_ds, cluster_var, clusters_to_keep,
+                model_type, remove_background, remove_neg_amp,
+                remove_outliers, single_plot, sharexy
+            )
+        select_labels_in_cluster_interactive(ds, callback=_on_labels)
+        return
+
+    # Determine peak model
+    if model_type is None:
+        model_type = ds.attrs.get('peak_model_type', 'lorentzian')
+    if model_type == 'lorentzian':
+        model = LorentzianModel()
+    elif model_type == 'gaussian':
+        model = GaussianModel()
+    elif model_type == 'voigt':
+        model = VoigtModel()
+    else:
+        raise ValueError("model_type must be 'lorentzian', 'gaussian', or 'voigt'")
+
+    # Extract data arrays
+    bias = ds['bias_mV'].values
+    centers = ds['peak_center'].values
+    amps = ds['peak_amplitude'].values
+    sigs = ds['peak_sigma'].values
+    Y, X, P = centers.shape
+
+    # Optional background subtraction
+    if remove_background and 'background_value' in ds:
+        bg3d = np.broadcast_to(ds['background_value'].values[:, :, None], (Y, X, P))
+        amps = amps - bg3d
+
+    # Optional zero-negative amplitudes
+    if remove_neg_amp:
+        amps = np.where(amps < 0, 0, amps)
+
+    if single_plot:
+        # Overlay all clusters in one axes
+        n = len(clusters_to_keep)
+        colors = sns.color_palette('tab10', n)
+        fig, ax = plt.subplots(figsize=(6, 6))
+        for i, cl in enumerate(clusters_to_keep):
+            c = colors[i]
+            mask = (ds[cluster_var].values == cl)
+            fc = centers[mask]
+            fa = amps[mask]
+            fs = sigs[mask]
+
+            # Outlier removal
+            if remove_outliers and fc.size:
+                df = pd.DataFrame({'center': fc, 'amplitude': fa, 'width': fs})
+                for col in df:
+                    q1, q3 = df[col].quantile([0.25, 0.75])
+                    iqr = q3 - q1
+                    df = df[df[col].between(q1 - 1.5 * iqr, q3 + 1.5 * iqr)]
+                fc, fa, fs = df['center'].values, df['amplitude'].values, df['width'].values
+
+            count = fc.size
+            if count:
+                curves = [model.eval(params=model.make_params(center=cen, amplitude=amp, sigma=sig), x=bias)
+                          for cen, amp, sig in zip(fc, fa, fs)]
+                arr = np.vstack(curves)
+                mu = arr.mean(axis=0)
+                ci = 1.96 * arr.std(axis=0) / np.sqrt(count) if count > 1 else np.zeros_like(mu)
+                ax.plot(bias, mu, label=f'Cluster {cl} (n={count})', color=c)
+                if count > 1:
+                    ax.fill_between(bias, mu - ci, mu + ci, color=c, alpha=0.3)
+
+        ax.set_title('Cluster Peak Average Curves')
+        ax.set_xlabel('Bias (mV)')
+        ax.set_ylabel('LDOS')
+        ax.legend(title='Clusters', bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.grid(True)
+        plt.tight_layout(rect=[0, 0, 0.75, 1])
+        plt.show()
+    else:
+        # Facet: one subplot per cluster with optional shared axes
+        from math import ceil
+        n_clusters = len(clusters_to_keep)
+        n_cols = 4
+        n_rows = ceil(n_clusters / n_cols)
+        colors = sns.color_palette('tab10', n_clusters)
+        fig, axes = plt.subplots(
+            n_rows, n_cols,
+            figsize=(4 * n_cols, 3 * n_rows),
+            sharex=sharexy, sharey=sharexy,
+            squeeze=False
+        )
+        for idx, cl in enumerate(clusters_to_keep):
+            row, col = divmod(idx, n_cols)
+            ax = axes[row][col]
+            c = colors[idx]
+            mask = (ds[cluster_var].values == cl)
+            fc = centers[mask]
+            fa = amps[mask]
+            fs = sigs[mask]
+            if remove_outliers and fc.size:
+                df = pd.DataFrame({'center': fc, 'amplitude': fa, 'width': fs})
+                for ccol in df:
+                    q1, q3 = df[ccol].quantile([0.25, 0.75])
+                    iqr = q3 - q1
+                    df = df[df[ccol].between(q1 - 1.5 * iqr, q3 + 1.5 * iqr)]
+                fc, fa, fs = df['center'].values, df['amplitude'].values, df['width'].values
+
+            count = fc.size
+            if count:
+                curves = [model.eval(params=model.make_params(center=cen, amplitude=amp, sigma=sig), x=bias)
+                          for cen, amp, sig in zip(fc, fa, fs)]
+                arr = np.vstack(curves)
+                mu = arr.mean(axis=0)
+                ci = 1.96 * arr.std(axis=0) / np.sqrt(count) if count > 1 else np.zeros_like(mu)
+                ax.plot(bias, mu, color=c)
+                if count > 1:
+                    ax.fill_between(bias, mu - ci, mu + ci, color=c, alpha=0.3)
+            # Only label leftmost and bottom axes
+            if col == 0:
+                ax.set_ylabel('LDOS')
+            if row == n_rows - 1:
+                ax.set_xlabel('Bias (mV)')
+            ax.set_title(f'Cluster {cl} (n={count})')
+            ax.grid(True)
+        # Hide unused axes
+        for idx in range(n_clusters, n_rows * n_cols):
+            ax = axes[idx // n_cols][idx % n_cols]
+            ax.set_visible(False)
+        plt.tight_layout()
+        plt.show()
+
+    # Save-as-SVG button
+    try:
+        from ipywidgets import Button
+        from IPython.display import display
+        save_button = Button(description='Save as SVG', button_style='success')
+        def _on_save(btn):
+            out_dir = os.path.join(os.getcwd(), 'output_figures')
+            os.makedirs(out_dir, exist_ok=True)
+            mode = 'overlay' if single_plot else 'grid'
+            fname = f"cluster_{cluster_var}_{'_'.join(map(str, clusters_to_keep))}_{mode}_avg.svg"
+            path = os.path.join(out_dir, fname)
+            fig.savefig(path, format='svg')
+            print(f"✔ Saved SVG to: {path}")
+        save_button.on_click(_on_save)
+        display(save_button)
+    except ImportError:
+        pass
+
 # -
+
+
+
 
 
 
@@ -9575,16 +10842,6 @@ def _compute_and_attach(
 
 
 # -
-
-
-
-
-
-
-
-
-ds
-
 # # After function loading, apply PCA & KNN
 #
 
@@ -9607,14 +10864,283 @@ plot_cluster_statistics(
 # -
 # filtering unusual widths --> pretreatments for the data 
 
+# +
+import os
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import xarray as xr
+import matplotlib.pyplot as plt
+from lmfit.models import LorentzianModel, GaussianModel, VoigtModel
 
+def plot_cluster_statistics_avg_plot_only(
+    ds: xr.Dataset,
+    cluster_var: str = None,
+    clusters_to_keep: list[int] = None,
+    model_type: str = None,
+    remove_background: bool = False,
+    remove_neg_amp: bool = False,
+    remove_outliers: bool = False,
+    single_plot: bool = True,
+    sharexy: bool = True
+) -> None:
+    """
+    Interactive visualization of cluster peak statistics.
+
+    If cluster_var or clusters_to_keep is None, launches interactive selectors.
+    Once both are provided:
+
+      - single_plot=True:
+        • Left panel: 1:1 aspect ratio overlay of each cluster’s mean peak curve ±95% CI.
+        • Right panel: legend only, same width as the plot panel.
+        
+      - single_plot=False:
+        • Grid of subplots (4 columns) for each cluster.
+        • sharexy controls whether subplots share x and y axes.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset containing 'bias_mV' coordinate and
+        'peak_center', 'peak_amplitude', 'peak_sigma' data variables,
+        plus a clustering variable indicating label per data point.
+    cluster_var : str, optional
+        Name of the cluster label variable in ds. Interactive selector if None.
+    clusters_to_keep : list[int], optional
+        List of cluster labels to include. Interactive selector if None.
+    model_type : str, optional
+        Peak model: 'lorentzian', 'gaussian', or 'voigt'.
+        Defaults to ds.attrs['peak_model_type'] or 'lorentzian'.
+    remove_background : bool, default False
+        Subtract 'background_value' if present.
+    remove_neg_amp : bool, default False
+        Zero out negative amplitudes.
+    remove_outliers : bool, default False
+        Remove points beyond 1.5 IQR before averaging.
+    single_plot : bool, default True
+        If True, use single square plot + legend panel. Otherwise, grid of subplots.
+    sharexy : bool, default True
+        When single_plot=False, controls sharing of axes.
+    """
+    global selected_cluster_var_global, selected_cluster_labels_global
+    selected_cluster_var_global = globals().get('selected_cluster_var_global', None)
+    selected_cluster_labels_global = globals().get('selected_cluster_labels_global', None)
+
+    # Stage 1: interactive cluster variable selector
+    if cluster_var is None:
+        def _on_var(var):
+            print(f"Selected cluster variable: {var}")
+            plot_cluster_statistics_avg_plot_only(
+                ds, var, None, model_type,
+                remove_background, remove_neg_amp, remove_outliers,
+                single_plot, sharexy
+            )
+        select_cluster_data_var_interactive(ds, callback=_on_var)
+        return
+
+    # Stage 2: interactive cluster label selector
+    if clusters_to_keep is None:
+        def _on_labels(filtered_ds, cluster_var, clusters_to_keep, **kwargs):
+            print(f"Selected labels: {clusters_to_keep}")
+            plot_cluster_statistics_avg_plot_only(
+                filtered_ds, cluster_var, clusters_to_keep,
+                model_type, remove_background, remove_neg_amp,
+                remove_outliers, single_plot, sharexy
+            )
+        select_labels_in_cluster_interactive(ds, callback=_on_labels)
+        return
+
+    # Choose peak model
+    if model_type is None:
+        model_type = ds.attrs.get('peak_model_type', 'lorentzian')
+    if model_type == 'lorentzian':
+        model = LorentzianModel()
+    elif model_type == 'gaussian':
+        model = GaussianModel()
+    elif model_type == 'voigt':
+        model = VoigtModel()
+    else:
+        raise ValueError("model_type must be 'lorentzian', 'gaussian', or 'voigt'")
+
+    # Extract raw arrays
+    bias    = ds['bias_mV'].values
+    centers = ds['peak_center'].values
+    amps    = ds['peak_amplitude'].values
+    sigs    = ds['peak_sigma'].values
+
+    # Background subtraction
+    if remove_background and 'background_value' in ds:
+        Y, X, P = centers.shape
+        bg3d = np.broadcast_to(ds['background_value'].values[:, :, None], (Y, X, P))
+        amps = amps - bg3d
+
+    # Zero negative amplitudes
+    if remove_neg_amp:
+        amps = np.where(amps < 0, 0, amps)
+
+    if single_plot:
+        # Create figure with two equal‐width panels and constrained layout
+        fig, (ax, legend_ax) = plt.subplots(
+            nrows=1, ncols=2,
+            figsize=(10, 5),                      # width = 2 × height → each panel is square
+            gridspec_kw={'width_ratios': [1, 0.5]},
+            constrained_layout=True
+        )
+
+        # Enforce square axes on left panel
+        ax.set_box_aspect(1)
+
+        # Plot mean ±95% CI for each cluster
+        colors = sns.color_palette('tab10', len(clusters_to_keep))
+        for idx, cl in enumerate(clusters_to_keep):
+            mask = (ds[cluster_var].values == cl)
+            fc = centers[mask]
+            fa = amps[mask]
+            fs = sigs[mask]
+            count = fc.size
+            if count == 0:
+                continue
+
+            # Remove outliers if requested
+            if remove_outliers:
+                df = pd.DataFrame({'center': fc, 'amplitude': fa, 'width': fs})
+                for col in df:
+                    q1, q3 = df[col].quantile([0.25, 0.75])
+                    iqr = q3 - q1
+                    df = df[df[col].between(q1 - 1.5*iqr, q3 + 1.5*iqr)]
+                fc, fa, fs = df['center'].values, df['amplitude'].values, df['width'].values
+
+            # Evaluate model curves
+            curves = [
+                model.eval(params=model.make_params(center=cen, amplitude=amp, sigma=sig), x=bias)
+                for cen, amp, sig in zip(fc, fa, fs)
+            ]
+            arr = np.vstack(curves)
+            mu = arr.mean(axis=0)
+            ci = 1.96 * arr.std(axis=0) / np.sqrt(count) if count > 1 else np.zeros_like(mu)
+
+            ax.plot(bias, mu, label=f'Cluster {cl} (n={count})', color=colors[idx])
+            if count > 1:
+                ax.fill_between(bias, mu - ci, mu + ci, color=colors[idx], alpha=0.3)
+
+        ax.set_xlabel('Bias (mV)')
+        ax.set_ylabel('LDOS')
+        ax.set_title('Cluster Peak Average Curves')
+        ax.grid(True)
+
+        # Legend in right panel
+        legend_ax.axis('off')
+        handles, labels = ax.get_legend_handles_labels()
+        legend_ax.legend(
+            handles, labels,
+            title='Clusters',
+            loc='center',
+            frameon=False
+        )
+
+        plt.show()
+
+    else:
+        # Grid of subplots per cluster
+        from math import ceil
+        n_clusters = len(clusters_to_keep)
+        n_cols = 4
+        n_rows = ceil(n_clusters / n_cols)
+        colors = sns.color_palette('tab10', n_clusters)
+
+        fig, axes = plt.subplots(
+            n_rows, n_cols,
+            figsize=(4 * n_cols, 3 * n_rows),
+            sharex=sharexy, sharey=sharexy,
+            squeeze=False,
+            constrained_layout=True
+        )
+
+        for idx, cl in enumerate(clusters_to_keep):
+            row, col = divmod(idx, n_cols)
+            ax = axes[row][col]
+            mask = (ds[cluster_var].values == cl)
+            fc = centers[mask]
+            fa = amps[mask]
+            fs = sigs[mask]
+            count = fc.size
+
+            # Outlier removal
+            if remove_outliers and count > 0:
+                df = pd.DataFrame({'center': fc, 'amplitude': fa, 'width': fs})
+                for ccol in df:
+                    q1, q3 = df[ccol].quantile([0.25, 0.75])
+                    iqr = q3 - q1
+                    df = df[df[ccol].between(q1 - 1.5*iqr, q3 + 1.5*iqr)]
+                fc, fa, fs = df['center'].values, df['amplitude'].values, df['width'].values
+
+            if count > 0:
+                curves = [
+                    model.eval(params=model.make_params(center=cen, amplitude=amp, sigma=sig), x=bias)
+                    for cen, amp, sig in zip(fc, fa, fs)
+                ]
+                arr = np.vstack(curves)
+                mu = arr.mean(axis=0)
+                ci = 1.96 * arr.std(axis=0) / np.sqrt(count) if count > 1 else np.zeros_like(mu)
+
+                ax.plot(bias, mu, color=colors[idx])
+                if count > 1:
+                    ax.fill_between(bias, mu - ci, mu + ci, color=colors[idx], alpha=0.3)
+
+            if col == 0:
+                ax.set_ylabel('LDOS')
+            if row == n_rows - 1:
+                ax.set_xlabel('Bias (mV)')
+            ax.set_title(f'Cluster {cl} (n={count})')
+            ax.grid(True)
+
+        # Hide unused axes
+        for idx in range(n_clusters, n_rows * n_cols):
+            axes[idx // n_cols][idx % n_cols].set_visible(False)
+
+        plt.show()
+
+    # Interactive SVG save button
+    try:
+        from ipywidgets import Button
+        from IPython.display import display
+
+        save_button = Button(description='Save as SVG', button_style='success')
+        def _on_save(btn):
+            out_dir = os.path.join(os.getcwd(), 'output_figures')
+            os.makedirs(out_dir, exist_ok=True)
+            mode = 'overlay' if single_plot else 'grid'
+            fname = f"cluster_{cluster_var}_{'_'.join(map(str, clusters_to_keep))}_{mode}_avg.svg"
+            path = os.path.join(out_dir, fname)
+            fig.savefig(path, format='svg')
+            print(f"✔ Saved SVG to: {path}")
+
+        save_button.on_click(_on_save)
+        display(save_button)
+    except ImportError:
+        pass
+
+
+
+# -
+
+plot_cluster_statistics_avg_plot_only(
+    ds,
+    cluster_var = None,
+    clusters_to_keep = None,
+    model_type = None,
+    remove_background = False,    remove_neg_amp = False,
+    remove_outliers = False,
+    single_plot = True,
+    sharexy = False
+)
 
 # +
 ## check clusters in 3D 
 
 interactive_3d_cluster_plot(ds)
 # -
-
+ds
 
 
 # +
@@ -9652,6 +11178,18 @@ plot_cluster_statistics(
     remove_neg_amp = False,
     remove_outliers = False
 
+)
+# -
+
+plot_cluster_statistics_avg_plot_only(
+    ds,
+    cluster_var = None,
+    clusters_to_keep = None,
+    model_type = None,
+    remove_background = False,    remove_neg_amp = False,
+    remove_outliers = False,
+    single_plot = True,
+    sharexy = False
 )
 
 # +
@@ -9694,8 +11232,6 @@ plot_cluster_statistics(
 
 )
 # -
-
-
 
 
 
@@ -10174,8 +11710,10 @@ def cluster_umap_HDBSCAN(
     print(f"✅ UMAP+HDBSCAN complete. Added '{name}'.")
     return ds
 
-# -
 
+
+# -
+ds_filter
 
 
 ds = cluster_umap_HDBSCAN(        
@@ -10208,7 +11746,7 @@ from IPython.display import display, FileLink
 from tqdm.notebook import tqdm
 from ipywidgets import Button, HBox
 from matplotlib import patheffects
-from matplotlib.colors import ListedColormap
+from matplotlib.colors import ListedColormap, Normalize
 
 # Assumes select_ML_features_interactive(ds, callback) is defined elsewhere
 
@@ -10225,55 +11763,21 @@ def cluster_umap_HDBSCAN(
     Perform UMAP + HDBSCAN clustering on a 3D Dataset, plot the result with
     optional sampling and rasterization, and add cluster labels back into ds.
 
-    This function does the following:
-      1. If `selected_features` is None, launches an interactive selector.
-      2. Builds a per-pixel feature matrix from the chosen features.
-      3. Masks invalid pixels (NaN or optional ZB_mask).
-      4. Standardizes and reduces dimensionality via PCA.
-      5. Embeds reduced features into 2D via UMAP.
-      6. Performs an HDBSCAN grid search over `param_grid` and selects
-         the best configuration by silhouette score (or minimal noise).
-      7. Plots the UMAP embedding:
-         - Down-samples points by `plot_sample_frac` to reduce file size.
-         - Uses a discrete `tab10` colormap cycled for labels >10.
-         - Optionally rasterizes the scatter points (`rasterize_pts=True`)
-           so that only axes/text remain vector and points become a bitmap.
-         - Annotates each cluster’s centroid with a black label outlined
-           in white for maximum contrast.
-      8. Provides a “Save UMAP as SVG” button that writes to
-         `output_figures/umap_clusters.svg` and displays a download link.
-      9. Stores the cluster labels back into `ds` as a new data variable.
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        Input dataset with 1D coords 'X','Y' and data_vars having a 'peak' dim.
-    selected_features : list[str], optional
-        List of feature names to use. If None, an interactive selector appears.
-    param_grid : dict, optional
-        HDBSCAN grid search options; default
-        {'min_cluster_size':[20,50],'min_samples':[5,10],
-         'cluster_selection_epsilon':[0.0,0.2]}.
-    umap_kwargs : dict, optional
-        Passed to UMAP(); default {'n_neighbors':30,'min_dist':0.3,'random_state':42}.
-    variance_threshold : float, default 0.95
-        PCA cumulative explained variance threshold.
-    plot_sample_frac : float, default 0.25
-        Fraction of points to plot in the UMAP scatter to reduce SVG size.
-    rasterize_pts : bool, default True
-        If True, scatter points are rasterized (bitmap) inside the SVG.
-
-    Returns
-    -------
-    xr.Dataset
-        The same dataset, mutated in-place with a new data variable
-        'cluster_umap_HDBSCAN0' (or next available index) containing cluster labels.
+    Steps:
+      1. Interactive feature selection if needed.
+      2. Build per-pixel feature matrix and mask invalid points.
+      3. Standardize & reduce via PCA to cover variance_threshold.
+      4. Embed with UMAP.
+      5. Grid search HDBSCAN over param_grid, choose best by silhouette or minimal noise.
+      6. Plot UMAP embedding with sampling, rasterization, and cluster centroid annotations.
+      7. Provide "Save UMAP as SVG" button.
+      8. Store labels in ds and record metadata.
     """
-    # Ensure output directory exists for saving figures
+    # Ensure output directory
     output_dir = 'output_figures'
     os.makedirs(output_dir, exist_ok=True)
 
-    # ─── Interactive feature-selection ─────────────────────────────────────
+    # Interactive feature-selection
     if selected_features is None:
         def _continue(feats):
             cluster_umap_HDBSCAN(
@@ -10284,7 +11788,7 @@ def cluster_umap_HDBSCAN(
         select_ML_features_interactive(ds, callback=_continue)
         return ds
 
-    # Set default grids if not provided
+    # Defaults
     if param_grid is None:
         param_grid = {
             'min_cluster_size': [20, 50],
@@ -10298,13 +11802,12 @@ def cluster_umap_HDBSCAN(
             'random_state': 42
         }
 
-    # 1) Build spatial coordinate grid
-    x_vals = ds['X'].values
-    y_vals = ds['Y'].values
+    # Build grid
+    x_vals, y_vals = ds['X'].values, ds['Y'].values
     Xg, Yg = np.meshgrid(x_vals, y_vals)
     nY, nX = Xg.shape
 
-    # 2) Stack chosen features into a 2D array [pixels × features]
+    # Stack features
     peak_vars = [v for v in ds.data_vars if 'peak' in ds[v].dims]
     nPeak = ds[peak_vars[0]].shape[-1] if peak_vars else 1
     arrs = []
@@ -10322,7 +11825,7 @@ def cluster_umap_HDBSCAN(
         arrs.append(arr.flatten())
     all_feats = np.stack(arrs, axis=1)
 
-    # 3) Mask out invalid points (NaNs or ZB_mask)
+    # Mask invalid
     if 'ZB_mask' in ds:
         zb = ds['ZB_mask'].values.astype(bool)
         mask_flat = np.repeat(zb[..., None], nPeak, axis=2).reshape(-1)
@@ -10331,7 +11834,7 @@ def cluster_umap_HDBSCAN(
     valid = (~np.isnan(all_feats).any(axis=1)) & mask_flat
     features = all_feats[valid]
 
-    # 4) Standardize & apply PCA
+    # Standardize & PCA
     X_scaled = StandardScaler().fit_transform(features)
     pca = PCA(random_state=42)
     scores = pca.fit_transform(X_scaled)
@@ -10339,10 +11842,10 @@ def cluster_umap_HDBSCAN(
     n_comp = int(np.searchsorted(cumvar, variance_threshold) + 1)
     X_pca = scores[:, :n_comp]
 
-    # 5) UMAP embedding
+    # UMAP embedding
     X_emb = umap.UMAP(**umap_kwargs).fit_transform(X_pca)
 
-    # 6) HDBSCAN grid search
+    # HDBSCAN grid search
     combos = list(itertools.product(
         param_grid['min_cluster_size'],
         param_grid['min_samples'],
@@ -10369,7 +11872,7 @@ def cluster_umap_HDBSCAN(
         label_store.append((lbls.copy(), (mcs, ms, eps)))
     df = pd.DataFrame(results)
 
-    # 7) Choose best configuration
+    # Select best
     positive = df[df['silhouette'] > 0]
     if not positive.empty:
         best = positive.sort_values('silhouette', ascending=False).iloc[0]
@@ -10380,41 +11883,38 @@ def cluster_umap_HDBSCAN(
         if cfg == (best['min_cluster_size'], best['min_samples'], best['epsilon'])
     )
 
-    # 8) Plot UMAP embedding with sampling & rasterization
+    # Plot UMAP
     fig, ax = plt.subplots(figsize=(6, 5))
-
-    # Down-sample points to reduce file size
     N = X_emb.shape[0]
     if 0 < plot_sample_frac < 1.0:
-        sample_size = int(N * plot_sample_frac)
-        idx = np.random.choice(N, size=sample_size, replace=False)
-        X_plot = X_emb[idx]
-        labels_plot = best_lbls[idx]
+        idx = np.random.choice(N, size=int(N * plot_sample_frac), replace=False)
+        X_plot, labels_plot = X_emb[idx], best_lbls[idx]
     else:
-        X_plot = X_emb
-        labels_plot = best_lbls
+        X_plot, labels_plot = X_emb, best_lbls
 
     unique_labels = np.unique(labels_plot)
     max_label = int(unique_labels.max())
-
-    # Build a ListedColormap from tab10, cycling if >10 labels
     base_colors = plt.get_cmap('tab10').colors
     colors_list = [base_colors[i % len(base_colors)] for i in range(max_label + 1)]
     cmap = ListedColormap(colors_list)
 
-    # Scatter: optionally rasterize points and set alpha for density visualization
     sc = ax.scatter(
-        X_plot[:, 0], X_plot[:, 1],  # UMAP coordinates
-        c=labels_plot,                # cluster labels for coloring
+        X_plot[:,0], X_plot[:,1],
+        c=labels_plot,
         cmap=cmap,
         vmin=0,
         vmax=max_label,
         s=10,
-        alpha=0.3,                    # 투명도 설정: 점 밀도 강조
+        alpha=0.3,
         rasterized=rasterize_pts
     )
 
-    # Set title without line continuation backslash
+    # Colorbar without opacity (full color)
+    sm = plt.cm.ScalarMappable(norm=Normalize(vmin=0, vmax=max_label), cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, ticks=unique_labels)
+    cbar.set_ticklabels(unique_labels)
+
     ax.set_title(
         f"HDBSCAN best: mcs={best['min_cluster_size']}, ms={best['min_samples']}, eps={best['epsilon']}"
     )
@@ -10422,28 +11922,18 @@ def cluster_umap_HDBSCAN(
     ax.set_ylabel('UMAP2')
     ax.grid(True)
 
-    # Colorbar keyed to actual cluster labels
-    cbar = fig.colorbar(sc, ax=ax, ticks=unique_labels)
-    cbar.set_ticklabels(unique_labels)
-
-    # Annotate cluster centers with black text + white outline
+    # Annotate centers
     for lbl in unique_labels:
         mask = labels_plot == lbl
-        cx, cy = X_plot[mask, 0].mean(), X_plot[mask, 1].mean()
-        txt = ax.text(
-            cx, cy, str(int(lbl)),
-            ha='center', va='center',
-            fontsize=12, weight='bold', color='black'
-        )
-        txt.set_path_effects([
-            patheffects.Stroke(linewidth=3, foreground='white'),
-            patheffects.Normal()
-        ])
+        cx, cy = X_plot[mask,0].mean(), X_plot[mask,1].mean()
+        txt = ax.text(cx, cy, str(int(lbl)), ha='center', va='center',
+                      fontsize=12, weight='bold', color='black')
+        txt.set_path_effects([patheffects.Stroke(linewidth=3, foreground='white'), patheffects.Normal()])
 
     plt.tight_layout()
     plt.show()
 
-    # 9) Save-as-SVG button
+    # Save as SVG button
     save_btn = Button(description='Save UMAP as SVG')
     def _save_svg(btn):
         out_path = os.path.join(output_dir, 'umap_clusters.svg')
@@ -10452,11 +11942,11 @@ def cluster_umap_HDBSCAN(
     save_btn.on_click(_save_svg)
     display(save_btn)
 
-    # 10) Display top configurations
+    # Display top configs
     print("\nTop 5 configs by silhouette:")
     display(df.sort_values('silhouette', ascending=False).head())
 
-    # 11) Write cluster labels back into the dataset
+    # Write labels back
     full = np.full(all_feats.shape[0], -1, dtype=int)
     full[valid] = best_lbls
     clusters3d = full.reshape((nY, nX, nPeak))
@@ -10466,9 +11956,9 @@ def cluster_umap_HDBSCAN(
     while name in ds.data_vars:
         idx += 1
         name = f"{prefix}{idx}"
-    ds[name] = (('Y', 'X', 'peak'), clusters3d)
+    ds[name] = (('Y','X','peak'), clusters3d)
 
-    # 12) Serialize metadata attributes
+    # Serialize metadata
     ds.attrs.update({
         'feature_vars_used': json.dumps(selected_features),
         'param_grid':         json.dumps(param_grid),
@@ -10479,15 +11969,15 @@ def cluster_umap_HDBSCAN(
     print(f"✅ UMAP+HDBSCAN complete. Added '{name}'.")
     return ds
 
+
+
 # -
-
-
 
 ds = cluster_umap_HDBSCAN(        
     ds_filter,
     selected_features=None,
-    param_grid={"min_cluster_size":[ 300, 500, 1000, 1200], 
-                "min_samples":[30, 50, 80, 100, ], 
+    param_grid={"min_cluster_size":[ 500, 750, 800, 900, 1000, 1100, 1250], 
+                "min_samples":[80,90,  100, 110, 120,130 ], 
                 "cluster_selection_epsilon":[0,0.1]},
     umap_kwargs={"n_neighbors":50,
                  "min_dist":0.2, 
@@ -10506,7 +11996,10 @@ plot_cluster_statistics(ds)
 
 interactive_3d_cluster_plot(ds)
 
-ds.to_netcdf('grid_2T_003_fit_HDBSCAN_cluster3_20250629.nc')
+#ds.to_netcdf('grid_2T_003_fit_HDBSCAN_cluster3_20250629.nc')
+#ds.to_netcdf('grid_2T_003_fit_HDBSCAN3_20250706.nc')
+#ds.to_netcdf('grid_2T_003_fit_HDBSCAN1_20250720.nc')
+ds.to_netcdf('grid_2T_003_fit_HDBSCAN1_20250729.nc')
 
 # +
 # open cluster data set & re draw 
@@ -10515,7 +12008,14 @@ ds.to_netcdf('grid_2T_003_fit_HDBSCAN_cluster3_20250629.nc')
 # -
 
 
+# # load clusteredata & re-draw the UMAP 
+#
+
+
+
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ## other  (advanced) clustering test 
+# -
 
 
 ds_filter = ds_filtered_global.copy()
@@ -10801,7 +12301,9 @@ cluster_umap_HDBSCAN_Bayesian_opt(
 
 ds
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ### PCA UMAP KNN 
+# -
 
 ds_filtered
 
@@ -11031,6 +12533,7 @@ cluster_filter_interactive(ds_filtered)
 ds_filtered = ds_filtered_global.copy(deep=True)
 ds_filtered
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ### save other ideas for later , better clustering 
 
 # +
@@ -11278,9 +12781,9 @@ ds["clusters_umap_kmeans_best"] = (("Y", "X", "peak"), cluster_array)
 # Step 12: Summary
 print("Best K =", best_k)
 print("Unique Clusters:", np.unique(best_labels))
-# -
 
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true
 # ## zero bias weight 
 
 # +
@@ -11421,7 +12924,7 @@ print("Unique Clusters:", np.unique(best_labels))
 
 
 
-# ### zero-bias proximity feature 추가 방식
+# ### Approach for adding a zero-bias proximity feature
 
 # +
 import numpy as np
@@ -11538,7 +13041,7 @@ print("Feature used: [center, amplitude, sigma, 1 / (1 + |center|)]")
 
 # -
 
-# #### Zero-Bias Proximity Feature에 다양한 가중치 적용 + UMAP + KMeans
+# #### Applying various weights to the zero-bias proximity feature + UMAP + KMeans
 
 # +
 import numpy as np
@@ -11798,27 +13301,28 @@ ds
 
 
 
-# ## UMAP(Uniform Manifold Approximation and Projection) 활용
-# Manifold Learning 기반:
-# UMAP는 데이터가 고차원 공간에서 어떤 저차원 매니폴드(다양체)에 분포한다고 가정합니다. 즉, 데이터의 중요한 구조는 저차원 공간에 보존될 수 있다는 전제에서 시작합니다.
+# + [markdown] jp-MarkdownHeadingCollapsed=true
+# ## Using UMAP (Uniform Manifold Approximation and Projection)
+# Based on manifold learning:
+# UMAP assumes that data distributed in a high-dimensional space actually lies on some lower-dimensional manifold, i.e. that the important structure of the data can be preserved in a lower-dimensional space.
 #
-# 국소적(neighborhood) 구조 보존:
-# UMAP는 먼저 각 데이터 포인트 주변의 이웃 관계(국소적 구조)를 파악합니다. 이를 위해 사용자로부터 n_neighbors와 같은 하이퍼파라미터를 받아, 각 포인트에 대해 일정 개수의 가까운 이웃을 찾습니다.
+# Preserving local (neighborhood) structure:
+# UMAP first identifies the neighborhood relations around each data point. It takes a hyperparameter such as n_neighbors from the user and, for each point, finds that many nearby neighbors.
 #
-# 그래프 및 위상수학적 접근:
-# 각 포인트와 그 이웃 사이의 관계를 기반으로, 데이터의 국소적 구조를 표현하는 그래프(또는 퍼지 집합)를 구성합니다. 이 그래프는 데이터의 위상수학적 구조를 반영하도록 설계됩니다.
+# Graph / topological approach:
+# Based on the relations between each point and its neighbors, UMAP builds a graph (or fuzzy set) that represents the local structure of the data. This graph is designed to reflect the topological structure of the data.
 #
-# 저차원 임베딩 최적화:
-# 고차원에서 구성된 국소적 관계를 저차원에서도 최대한 보존하도록 임베딩을 최적화합니다. 이 과정은 고차원 그래프와 저차원 그래프 간의 차이를 최소화하는 비용 함수를 정의하고, 이를 최적화하는 방식으로 이루어집니다. 결과적으로 데이터의 글로벌 및 국소 구조가 균형 있게 반영된 저차원 공간을 얻게 됩니다.
+# Low-dimensional embedding optimization:
+# The embedding is optimized so that the local relations built in high dimensions are preserved as much as possible in low dimensions. This is done by defining a cost function that minimizes the difference between the high-dimensional and low-dimensional graphs, and optimizing it. The result is a low-dimensional space in which both the global and local structure of the data are balanced.
 #
-# 계산 효율성과 확장성:
-# UMAP는 계산 효율성이 뛰어나고, 대규모 데이터셋에 대해서도 상대적으로 빠른 임베딩이 가능합니다. 이는 특히 t-SNE에 비해 큰 데이터셋에서 유리한 점입니다.
+# Computational efficiency and scalability:
+# UMAP is computationally efficient and can embed even large datasets relatively quickly. This is especially advantageous compared to t-SNE on large datasets.
 #
-# 하이퍼파라미터 예시:
+# Example hyperparameters:
 #
-# n_neighbors: 각 데이터 포인트에서 고려할 이웃의 수. 국소적 구조의 해상도를 조정합니다.
-# min_dist: 저차원 임베딩에서 데이터 포인트들 사이의 최소 거리. 군집의 뭉침 정도나 분산 정도를 결정합니다.
-# metric: 고차원 데이터 간 거리를 측정하는 방식 (예: euclidean, cosine 등).
+# n_neighbors: number of neighbors considered for each data point. Adjusts the resolution of the local structure.
+# min_dist: minimum distance between data points in the low-dimensional embedding. Determines how tightly clusters pack together or how spread out they are.
+# metric: how distance between high-dimensional data points is measured (e.g. euclidean, cosine, etc.).
 
 # +
 import numpy as np
@@ -12282,11 +13786,22 @@ plt.show()
 
 # # After Clustering, extract clustered peaks only 
 
-ds = xr.open_dataset('grid_2T_003_fit_HDBSCAN_cluster3_20250629.nc')
+import xarray as xr
+
+# +
+#ds = xr.open_dataset('grid_2T_003_fit_HDBSCAN_cluster3_20250629.nc')
+#ds = xr.open_dataset('grid_2T_003_fit_HDBSCAN_cluster3_20250629.nc')
+
+#ds = xr.open_dataset('grid_2T_003_fit_HDBSCAN3_20250706.nc')
+#ds = xr.open_dataset('grid_2T_003_fit_HDBSCAN1_cluster6_20250720.nc')
+ds = xr.open_dataset('grid_2T_003_fit_HDBSCAN1_20250729.nc')
+#ds.to_netcdf('grid_2T_003_fit_HDBSCAN3_20250706.nc')
+
 #ds_filtered
 ds
+# -
 
-ds.LDOS
+ds#.LDOS
 
 
 # +
@@ -12819,23 +14334,6 @@ ds_opt2 = create_cluster_convolution_maps(
 
 ds_opt2
 
-'''#not-interactievly select
-ds_opt2 = create_cluster_convolution_maps(
-    ds_opt2,
-    cluster_var='cluster_umap_HDBSCAN0',
-    clusters_to_keep=[0, 1, 2, 3, 4]
-)'''
-
-# +
-#ds_opt2.cluster_umap_HDBSCAN9_L0.to_dataframe().describe()
-
-#ds_opt2.cluster_umap_HDBSCAN0_L2.mean(dim = ['X','Y']).plot()
-#ds_opt2.cluster_umap_HDBSCAN9_L0.sel(bias_mV =0).plot()
-
-#grid_data_dim_slicing(ds_opt2, channel = 'cluster_umap_HDBSCAN9_L2')
-
-#ds_opt2.to_netcdf('grid_2T_003_fit_cluster9_20250523.nc')
-
 # +
 import re
 import xarray as xr
@@ -13230,16 +14728,28 @@ interactive_cluster_map(ds_opt2.cluster_maps)
 
 
 
-# ## save clustering result
+# # save  & load clustering result 
 
-ds_opt2.to_netcdf('grid_2T_003_fit_HDBSCAN_cluster5_20250702.nc')
+#ds_opt2.to_netcdf('grid_2T_003_fit_HDBSCAN_cluster5_20250702.nc') # fig2 preparation data
+#ds_opt2.to_netcdf('grid_2T_003_fit_HDBSCAN_cluster5_20250706.nc') # fig3  new preparation 
+#ds_opt2.to_netcdf('grid_2T_003_fit_HDBSCAN3_cluster5_20250706.nc') # fig3  new preparation 
+#ds_opt2.to_netcdf('grid_2T_003_fit_HDBSCAN1_cluster6_20250720.nc') # fig3  new preparation 
+ds_opt2.to_netcdf('grid_2T_003_fit_HDBSCAN0_cluster3_20250729.nc') # fig3  new preparation 
 
-ds_opt2 = xr.open_dataset('grid_2T_003_fit_HDBSCAN_cluster5_20250702.nc')
 
-#ds = ds_opt2.copy()
-interactive_cluster_map(ds_opt2.cluster_maps)
+#ds_opt2 = xr.open_dataset('grid_2T_003_fit_HDBSCAN_cluster5_20250702.nc')
+#ds_opt2 = xr.open_dataset('grid_2T_003_fit_HDBSCAN3_cluster5_20250706.nc')
+ds_opt2 = xr.open_dataset('grid_2T_003_fit_HDBSCAN0_cluster3_20250729.nc')
 
-grid_data_dim_slicing(ds_opt2,channel='cluster_umap_HDBSCAN1_L1')
+# +
+
+#grid_2T_003_fit_HDBSCAN1_20250729
+ds_opt2
+# -
+
+
+
+grid_data_dim_slicing(ds_opt2,channel='cluster_umap_HDBSCAN1_L0')
 
 hv_bias_mV_slicing(ds_opt2, ch= 'cluster_umap_HDBSCAN1_L0')
 
@@ -13378,10 +14888,14 @@ def plot_top_percent_3d(
 
 # +
 
-plot_top_percent_3d(ds_opt2, 'cluster_umap_HDBSCAN1_L1', top_percent=0.5, cmap='Greens', opacity=0.1,max_size=10, camera_eye=(2, 2, 0.5))
+plot_top_percent_3d(ds_opt2, 'cluster_umap_HDBSCAN0_L0', top_percent=0.5, cmap='Greens', opacity=0.1,max_size=10, camera_eye=(2, 2, 0.5))
 # -
 
-plot_top_percent_3d(ds_opt2, 'LDOS', top_percent=10, cmap='viridis', opacity=0.1,max_size=10, camera_eye=(2, 2, 0.5))
+plot_top_percent_3d(ds_opt2, 'LDOS',
+                    top_percent=10, 
+                    cmap='viridis',
+                    opacity=0.1,max_size=10, 
+                    camera_eye=(2, 2, 0.5))
 
 
 
@@ -13514,11 +15028,13 @@ def plot_multi_top_percent_3d_logscale(
 # 사용 예시:
 plot_multi_top_percent_3d_logscale(
     ds_opt2,
-    ['cluster_umap_HDBSCAN1_L0', 'cluster_umap_HDBSCAN1_L1',
-     'cluster_umap_HDBSCAN1_L2', 'cluster_umap_HDBSCAN1_L3',
-     'cluster_umap_HDBSCAN1_L4',],# 'cluster_umap_HDBSCAN1_L5'],
+    #    ['cluster_umap_HDBSCAN1_L0', 'cluster_umap_HDBSCAN1_L1',
+    # 'cluster_umap_HDBSCAN1_L2', 'cluster_umap_HDBSCAN1_L3',
+    # 'cluster_umap_HDBSCAN1_L4', 'cluster_umap_HDBSCAN1_L5'],'''  
+    ['cluster_umap_HDBSCAN0_L0', 'cluster_umap_HDBSCAN0_L1',
+     'cluster_umap_HDBSCAN0_L2'],
     top_percent=1,
-    opacity=1,
+    opacity=0.6,
     max_size=10,
     camera_eye=(1.5, 1.5, 0.5)
 )
@@ -13650,9 +15166,10 @@ def plot_multi_size_by_value(
 
 plot_multi_size_by_value(
     ds_opt2,
-    ['cluster_umap_HDBSCAN1_L0', 'cluster_umap_HDBSCAN1_L1',
-     'cluster_umap_HDBSCAN1_L2', 'cluster_umap_HDBSCAN1_L3',
-     'cluster_umap_HDBSCAN1_L4'],#, 'cluster_umap_HDBSCAN1_L5'],
+    #['cluster_umap_HDBSCAN1_L0', 'cluster_umap_HDBSCAN1_L1',
+    # 'cluster_umap_HDBSCAN1_L2', 'cluster_umap_HDBSCAN1_L3',
+    # 'cluster_umap_HDBSCAN1_L4', 'cluster_umap_HDBSCAN1_L5'],
+    ['cluster_umap_HDBSCAN0_L0', 'cluster_umap_HDBSCAN0_L1','cluster_umap_HDBSCAN0_L2',],
     top_percent=1,
     opacity=0.1,
     max_size=20,
@@ -13820,62 +15337,91 @@ def plot_cluster_surfaces(
 
 # -
 
+# ## figure 1 schematic LDOS data 
+
 plot_cluster_surfaces(
     ds_opt2,
-    #['LDOS', 'cluster_umap_HDBSCAN1_L1'],
-    #['LDOS'],#, 'cluster_umap_HDBSCAN1_L1'],
-    ['cluster_umap_HDBSCAN1_L1'],#, 'cluster_umap_HDBSCAN1_L1'],
+    #['cluster_umap_HDBSCAN3_L0', 'cluster_umap_HDBSCAN3_L1',
+     #'cluster_umap_HDBSCAN3_L2', 'cluster_umap_HDBSCAN3_L3',
+     ['cluster_umap_HDBSCAN0_L0'],#],#, 'cluster_umap_HDBSCAN1_L5'],
     n_slices=7,
     sigma_factor= None,
-    opacity =0.2,
+    opacity =0.25,
+    highlight_bias_mV=0, # hilight bias_mV =0 
+    percentile_low=2,
+    percentile_high=99.9,
+    #colorscale='Gray_r',
+    colorscale='viridis',
+    camera_eye=(1.2, -1.4, 1.0),
+    camera_center={'x':0.0, 'y':0.3, 'z':-0.2},
+    camera_up={'x':0, 'y':0, 'z':0.3}
+)
+
+plot_cluster_surfaces(
+    ds_opt2,
+    ['LDOS'],
+    #['cluster_umap_HDBSCAN3_L0', 'cluster_umap_HDBSCAN3_L1',
+     #'cluster_umap_HDBSCAN3_L2', 'cluster_umap_HDBSCAN3_L3',
+     #['cluster_umap_HDBSCAN1_L0'],#],#, 'cluster_umap_HDBSCAN1_L5'],
+    n_slices=7,
+    sigma_factor= None,
+    opacity =0.25,
     highlight_bias_mV=0, # hilight bias_mV =0 
     percentile_low=2,
     percentile_high=99.8,
     #colorscale='Gray_r',
     colorscale='viridis',
-    camera_eye=(1.4, 1.4, 1.2),
-    camera_center={'x':0.5, 'y':0.5, 'z':0.5},
+    camera_eye=(1.2, -1.4, 1.0),
+    camera_center={'x':0.0, 'y':0.3, 'z':-0.2},
     camera_up={'x':0, 'y':0, 'z':0.3}
 )
 
 
 
+
+
+
+
 # ## volume plot view 
 
-# +
-import numpy as np
-import xarray as xr
-import plotly.graph_objects as go
-from plotly.graph_objs import Volume, Surface
-from ipywidgets import IntSlider, FloatSlider, HTML, Label, HBox, VBox
-from IPython.display import display
+     
+
+
+ds_opt2.cluster_umap_HDBSCAN1_L0
+
 
 def plot_interactive_volume_and_three_slices(
     ds: xr.Dataset,
     var_name: str,
-    colorscale: str = 'Viridis',
-    init_opacity: float = 0.5
+    init_opacity: float = 0.5,
+    camera_eye: tuple = None,
+    camera_center: dict = None,
+    camera_up: dict = None
 ) -> None:
-    """
-    Render a 3D volume plus three orthogonal slice planes (X, Y, Bias)
-    with full interactive controls:
-      - Independent opacity sliders for volume and each slice
-      - Percentile low/high sliders per slice to adjust contrast
-      - Index sliders per slice, showing actual coordinate values
-      - All controls laid out in a compact table at the top
-    """
-    # 1) Extract data array and coordinates
-    data = ds[var_name].values                   # shape (Y, X, B)
+    import numpy as np
+    import xarray as xr
+    import plotly.graph_objects as go
+    from plotly.graph_objs import Volume, Surface, Scatter3d
+    from ipywidgets import IntSlider, FloatSlider, HTML, Label, HBox, VBox, Dropdown
+    from IPython.display import display
+
+    data = ds[var_name].values
     Y = ds[var_name].coords['Y'].values
     X = ds[var_name].coords['X'].values
     B = ds[var_name].coords['bias_mV'].values
 
-    # 2) Prepare flattened values for volume rendering (replace NaN)
     flat_vals = np.nan_to_num(data.flatten(), nan=0.0)
 
-    # 3) Helper to create a slice Surface trace
+    colorscale_list = [
+        'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'Greys', 'Purples',
+        'Blues', 'Greens', 'Oranges', 'Reds', 'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd',
+        'RdPu', 'BuPu', 'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn',
+        'PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu', 'RdYlGn',
+        'Spectral', 'coolwarm', 'bwr', 'seismic', 'berlin', 'managua', 'vanimo'
+    ]
+
     def make_slice(axis: str, idx: int, opacity: float,
-                   p_low: float, p_high: float) -> Surface:
+                   p_low: float, p_high: float, cmap: str) -> Surface:
         if axis == 'x':
             xi, vals = X[idx], data[:, idx, :].T
             xx = np.full_like(vals, xi)
@@ -13886,7 +15432,7 @@ def plot_interactive_volume_and_three_slices(
             yy = np.full_like(vals, yi)
             xx = np.tile(X, (len(B), 1))
             zz = np.tile(B[:, None], (1, len(X)))
-        else:  # bias plane
+        else:
             bi, vals = B[idx], data[:, :, idx]
             zz = np.full_like(vals, bi)
             xx, yy = np.meshgrid(X, Y)
@@ -13894,177 +15440,535 @@ def plot_interactive_volume_and_three_slices(
         return Surface(
             x=xx, y=yy, z=zz,
             surfacecolor=np.nan_to_num(vals, nan=0.0),
-            cmin=np.nanpercentile(vals, p_low),
-            cmax=np.nanpercentile(vals, p_high),
-            colorscale=colorscale,
+            cmin=np.nanmin(data),   # 전체 범위로 조정
+            cmax=np.nanmax(data),
+            colorscale=cmap,
             showscale=False,
             opacity=opacity
         )
 
-    # 4) Initial parameters
-    ix0, iy0, ib0 = len(X)//2, len(Y)//2, len(B)//2
-    vol_op0 = 0.2            # initial volume opacity
-    sl_op0 = init_opacity    # initial slice opacity
-    pl0, ph0 = 2.0, 99.5     # initial percentile range
+    def make_intersection_lines(ix: int, iy: int, ib: int):
+        x0, y0, b0 = X[ix], Y[iy], B[ib]
+        return [
+            Scatter3d(x=[x0, x0], y=[y0, y0], z=[B.min(), B.max()],
+                      mode='lines', opacity=1.0,
+                      line=dict(color='yellow', width=4), showlegend=False),
+            Scatter3d(x=[x0, x0], y=[Y.min(), Y.max()], z=[b0, b0],
+                      mode='lines', opacity=1.0,
+                      line=dict(color='yellow', width=4), showlegend=False),
+            Scatter3d(x=[X.min(), X.max()], y=[y0, y0], z=[b0, b0],
+                      mode='lines', opacity=1.0,
+                      line=dict(color='yellow', width=4), showlegend=False)
+        ]
 
-    # 5) Create figure with volume + 3 slices
+    ix0, iy0, ib0 = len(X)//2, len(Y)//2, len(B)//2
+    vol_op0, sl_op0, pl0, ph0 = 0.2, init_opacity, 2.0, 99.5
+
+    cm_x = Dropdown(options=colorscale_list, value='viridis', layout={'width':'120px'})
+    cm_y = Dropdown(options=colorscale_list, value='viridis', layout={'width':'120px'})
+    cm_b = Dropdown(options=colorscale_list, value='viridis', layout={'width':'120px'})
+
+    vol_op_slider = FloatSlider(value=vol_op0, min=0, max=1, step=0.05, description='Vol', layout={'width':'150px'})
+    ix_slider = IntSlider(value=ix0, min=0, max=len(X)-1, layout={'width':'200px'})
+    iy_slider = IntSlider(value=iy0, min=0, max=len(Y)-1, layout={'width':'200px'})
+    ib_slider = IntSlider(value=ib0, min=0, max=len(B)-1, layout={'width':'200px'})
+
+    ix_label = HTML(f"{X[ix0]:.3g}", layout={'width':'80px'})
+    iy_label = HTML(f"{Y[iy0]:.3g}", layout={'width':'80px'})
+    ib_label = HTML(f"{B[ib0]:.3g}", layout={'width':'80px'})
+
+    opx_slider = FloatSlider(value=sl_op0, min=0, max=1, step=0.05, layout={'width':'150px'})
+    opy_slider = FloatSlider(value=sl_op0, min=0, max=1, step=0.05, layout={'width':'150px'})
+    opb_slider = FloatSlider(value=sl_op0, min=0, max=1, step=0.05, layout={'width':'150px'})
+
+    lpx_slider = FloatSlider(value=0.3, min=0, max=1, step=0.05, layout={'width':'150px'})
+    lpy_slider = FloatSlider(value=0.3, min=0, max=1, step=0.05, layout={'width':'150px'})
+    lpb_slider = FloatSlider(value=0.3, min=0, max=1, step=0.05, layout={'width':'150px'})
+
+    plx_slider = FloatSlider(value=pl0, min=0, max=50, step=0.1, layout={'width':'100px'})
+    phx_slider = FloatSlider(value=ph0, min=50, max=100, step=0.1, layout={'width':'100px'})
+    ply_slider = FloatSlider(value=pl0, min=0, max=50, step=0.1, layout={'width':'100px'})
+    phy_slider = FloatSlider(value=ph0, min=50, max=100, step=0.1, layout={'width':'100px'})
+    plb_slider = FloatSlider(value=pl0, min=0, max=50, step=0.1, layout={'width':'100px'})
+    phb_slider = FloatSlider(value=ph0, min=50, max=100, step=0.1, layout={'width':'100px'})
+
+    sx0 = make_slice('x', ix0, sl_op0, pl0, ph0, cm_x.value)
+    sy0 = make_slice('y', iy0, sl_op0, pl0, ph0, cm_y.value)
+    sb0 = make_slice('bias', ib0, sl_op0, pl0, ph0, cm_b.value)
+    lines0 = make_intersection_lines(ix0, iy0, ib0)
+
+    # Camera settings
+    camera_dict = {}
+    if camera_eye is not None:
+        camera_dict['eye'] = dict(x=camera_eye[0], y=camera_eye[1], z=camera_eye[2])
+    if camera_center is not None:
+        camera_dict['center'] = camera_center
+    if camera_up is not None:
+        camera_dict['up'] = camera_up
+
     fig = go.FigureWidget(data=[
         Volume(
             x=np.repeat(X, len(Y)*len(B)),
             y=np.tile(np.repeat(Y, len(X)), len(B)),
             z=np.tile(B, len(X)*len(Y)),
             value=flat_vals,
-            opacity=vol_op0,
-            opacityscale=[
-                [0.00, 0.00],
-                [0.10, 0.02],
-                [0.50, 0.10],
-                [1.00, 0.30],
-            ],
-            isomin=np.nanpercentile(data, 2),
-            isomax=np.nanpercentile(data, 98),
+            opacity=0.2,
+            isomin=np.nanmin(data),
+            isomax=np.nanmax(data),
             caps=dict(x_show=False, y_show=False, z_show=False),
-            colorscale=colorscale,
-            showscale=False
+            colorscale='viridis',
+            showscale=True
         ),
-        make_slice('x', ix0, sl_op0, pl0, ph0),
-        make_slice('y', iy0, sl_op0, pl0, ph0),
-        make_slice('bias', ib0, sl_op0, pl0, ph0),
+        sx0, sy0, sb0, *lines0
     ])
     fig.update_layout(
         title=f"{var_name} Volume + 3 Slices",
         scene=dict(
-            xaxis_title='X', yaxis_title='Y', zaxis_title='bias_mV',
-            aspectmode='auto'
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='bias_mV',
+            aspectmode='auto',
+            camera=camera_dict if camera_dict else None
         ),
-        margin=dict(l=0, r=0, b=0, t=30)
+        margin=dict(l=0, r=0, b=0, t=30),
+        width=800, height=600
     )
 
-    # 6) Create widgets
-    # Volume opacity
-    vol_op_slider = FloatSlider(value=vol_op0, min=0.0, max=1.0, step=0.05,
-                                description='Vol', layout={'width':'150px'})
-
-    # Slice index sliders
-    ix_slider = IntSlider(value=ix0, min=0, max=len(X)-1, step=1,
-                          layout={'width':'200px'})
-    iy_slider = IntSlider(value=iy0, min=0, max=len(Y)-1, step=1,
-                          layout={'width':'200px'})
-    ib_slider = IntSlider(value=ib0, min=0, max=len(B)-1, step=1,
-                          layout={'width':'200px'})
-
-    # Coordinate labels
-    ix_label = HTML(f"{X[ix0]:.3g}", layout={'width':'80px'})
-    iy_label = HTML(f"{Y[iy0]:.3g}", layout={'width':'80px'})
-    ib_label = HTML(f"{B[ib0]:.3g}", layout={'width':'80px'})
-
-    # Slice opacity sliders
-    opx_slider = FloatSlider(value=sl_op0, min=0.0, max=1.0, step=0.05,
-                             layout={'width':'150px'})
-    opy_slider = FloatSlider(value=sl_op0, min=0.0, max=1.0, step=0.05,
-                             layout={'width':'150px'})
-    opb_slider = FloatSlider(value=sl_op0, min=0.0, max=1.0, step=0.05,
-                             layout={'width':'150px'})
-
-    # Percentile range sliders
-    plx_slider = FloatSlider(value=pl0, min=0.0, max=50.0, step=0.1,
-                             layout={'width':'100px'})
-    phx_slider = FloatSlider(value=ph0, min=50.0, max=100.0, step=0.1,
-                             layout={'width':'100px'})
-    ply_slider = FloatSlider(value=pl0, min=0.0, max=50.0, step=0.1,
-                             layout={'width':'100px'})
-    phy_slider = FloatSlider(value=ph0, min=50.0, max=100.0, step=0.1,
-                             layout={'width':'100px'})
-    plb_slider = FloatSlider(value=pl0, min=0.0, max=50.0, step=0.1,
-                             layout={'width':'100px'})
-    phb_slider = FloatSlider(value=ph0, min=50.0, max=100.0, step=0.1,
-                             layout={'width':'100px'})
-
-    # 7) Callback to update all traces
     def on_change(_):
         ix, iy, ib = ix_slider.value, iy_slider.value, ib_slider.value
-        opv = vol_op_slider.value
-        opx, opy, opb = opx_slider.value, opy_slider.value, opb_slider.value
-        plx, phx = plx_slider.value, phx_slider.value
-        ply, phy = ply_slider.value, phy_slider.value
-        plb, phb = plb_slider.value, phb_slider.value
-
-        # Update labels
+        vals = {
+            'opv': vol_op_slider.value,
+            'opx': opx_slider.value, 'opy': opy_slider.value, 'opb': opb_slider.value,
+            'lpx': lpx_slider.value, 'lpy': lpy_slider.value, 'lpb': lpb_slider.value,
+            'plx': plx_slider.value, 'phx': phx_slider.value,
+            'ply': ply_slider.value, 'phy': phy_slider.value,
+            'plb': plb_slider.value, 'phb': phb_slider.value,
+            'cmx': cm_x.value, 'cmy': cm_y.value, 'cmb': cm_b.value
+        }
         ix_label.value = f"{X[ix]:.3g}"
         iy_label.value = f"{Y[iy]:.3g}"
         ib_label.value = f"{B[ib]:.3g}"
 
+        sx = make_slice('x', ix, vals['opx'], vals['plx'], vals['phx'], vals['cmx'])
+        sy = make_slice('y', iy, vals['opy'], vals['ply'], vals['phy'], vals['cmy'])
+        sb = make_slice('bias', ib, vals['opb'], vals['plb'], vals['phb'], vals['cmb'])
+        new_lines = make_intersection_lines(ix, iy, ib)
+
         with fig.batch_update():
-            # Volume
-            fig.data[0].opacity = opv
+            fig.data[0].opacity = vals['opv']
+            for i, slc in enumerate([sx, sy, sb], start=1):
+                fig.data[i].x = slc.x; fig.data[i].y = slc.y; fig.data[i].z = slc.z
+                fig.data[i].surfacecolor = slc.surfacecolor
+                fig.data[i].opacity = slc.opacity; fig.data[i].colorscale = slc.colorscale
+            for k, ln in enumerate(new_lines, start=4):
+                fig.data[k].x = ln.x; fig.data[k].y = ln.y; fig.data[k].z = ln.z
+            fig.data[4].opacity = vals['lpb']
+            fig.data[5].opacity = vals['lpy']
+            fig.data[6].opacity = vals['lpx']
 
-            # X-slice
-            sx = make_slice('x', ix, opx, plx, phx)
-            fig.data[1].x = sx.x; fig.data[1].y = sx.y; fig.data[1].z = sx.z
-            fig.data[1].surfacecolor = sx.surfacecolor; fig.data[1].opacity = opx
-
-            # Y-slice
-            sy = make_slice('y', iy, opy, ply, phy)
-            fig.data[2].x = sy.x; fig.data[2].y = sy.y; fig.data[2].z = sy.z
-            fig.data[2].surfacecolor = sy.surfacecolor; fig.data[2].opacity = opy
-
-            # Bias-slice
-            sb = make_slice('bias', ib, opb, plb, phb)
-            fig.data[3].x = sb.x; fig.data[3].y = sb.y; fig.data[3].z = sb.z
-            fig.data[3].surfacecolor = sb.surfacecolor; fig.data[3].opacity = opb
-
-    # Register callback
-    for w in (vol_op_slider,
-              ix_slider, iy_slider, ib_slider,
-              opx_slider, opy_slider, opb_slider,
-              plx_slider, phx_slider,
-              ply_slider, phy_slider,
-              plb_slider, phb_slider):
+    for w in (
+        vol_op_slider, ix_slider, iy_slider, ib_slider,
+        opx_slider, opy_slider, opb_slider,
+        lpx_slider, lpy_slider, lpb_slider,
+        plx_slider, phx_slider, ply_slider, phy_slider, plb_slider, phb_slider,
+        cm_x, cm_y, cm_b
+    ):
         w.observe(on_change, names='value')
 
-    # 8) Layout controls in table form
     header = HBox([
-        Label('Axis',    layout={'width':'60px'}),
-        Label('Index',   layout={'width':'200px'}),
-        Label('Value',   layout={'width':'80px'}),
-        Label('Opacity', layout={'width':'150px'}),
-        Label('Low %',   layout={'width':'100px'}),
-        Label('High %',  layout={'width':'100px'}),
+        Label('Axis', layout={'width':'60px'}),
+        Label('Index', layout={'width':'200px'}),
+        Label('Value', layout={'width':'80px'}),
+        Label('Slice Opac', layout={'width':'150px'}),
+        Label('Line Opac', layout={'width':'150px'}),
+        Label('Low %', layout={'width':'100px'}),
+        Label('High %', layout={'width':'100px'}),
+        Label('CMap', layout={'width':'120px'}),
     ])
+    row_vol = HBox([Label('Vol', layout={'width':'60px'}), vol_op_slider, Label('', layout={'width':'150px'})])
+    row_x   = HBox([Label('X', layout={'width':'60px'}), ix_slider, ix_label, opx_slider, lpx_slider, plx_slider, phx_slider, cm_x])
+    row_y   = HBox([Label('Y', layout={'width':'60px'}), iy_slider, iy_label, opy_slider, lpy_slider, ply_slider, phy_slider, cm_y])
+    row_b   = HBox([Label('Bias', layout={'width':'60px'}), ib_slider, ib_label, opb_slider, lpb_slider, plb_slider, phb_slider, cm_b])
 
-    row_vol = HBox([ Label('Vol', layout={'width':'60px'}), vol_op_slider ])
-    row_x   = HBox([ Label('X',   layout={'width':'60px'}), ix_slider, ix_label,
-                     opx_slider, plx_slider, phx_slider ])
-    row_y   = HBox([ Label('Y',   layout={'width':'60px'}), iy_slider, iy_label,
-                     opy_slider, ply_slider, phy_slider ])
-    row_b   = HBox([ Label('Bias',layout={'width':'60px'}), ib_slider, ib_label,
-                     opb_slider, plb_slider, phb_slider ])
-
-    controls = VBox([ header, row_vol, row_x, row_y, row_b ])
-
-    # Display controls above the figure
-    display(VBox([controls, fig]))
+    display(VBox([header, row_vol, row_x, row_y, row_b]))
+    display(fig)
 
 
+
+def plot_interactive_volume_and_three_slices(
+    ds: xr.Dataset,
+    var_name: str,
+    init_opacity: float = 0.5,
+    init_eye: tuple = (1.2, -1.4, 1.0),
+    init_center: dict = {'x':0.0, 'y':0.3, 'z':-0.2},
+    init_up: dict = {'x':0, 'y':0, 'z':0.0}
+) -> None:
+    import numpy as np
+    import xarray as xr
+    import plotly.graph_objects as go
+    from plotly.graph_objs import Volume, Surface, Scatter3d
+    from ipywidgets import IntSlider, FloatSlider, HTML, Label, HBox, VBox, Dropdown, Layout
+    from IPython.display import display
+
+    data = ds[var_name].values
+    Y = ds[var_name].coords['Y'].values
+    X = ds[var_name].coords['X'].values
+    B = ds[var_name].coords['bias_mV'].values
+
+    flat_vals = np.nan_to_num(data.flatten(), nan=0.0)
+
+    colorscale_list = [
+        'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'Greys', 'Purples',
+        'Blues', 'Greens', 'Oranges', 'Reds', 'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd',
+        'RdPu', 'BuPu', 'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn',
+        'PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu', 'RdYlGn',
+        'Spectral', 'coolwarm', 'bwr', 'seismic', 'berlin', 'managua', 'vanimo'
+    ]
+
+    def make_slice(axis: str, idx: int, opacity: float,
+                   p_low: float, p_high: float, cmap: str) -> Surface:
+        if axis == 'x':
+            xi, vals = X[idx], data[:, idx, :].T
+            xx = np.full_like(vals, xi)
+            yy = np.tile(Y, (len(B), 1))
+            zz = np.tile(B[:, None], (1, len(Y)))
+        elif axis == 'y':
+            yi, vals = Y[idx], data[idx, :, :].T
+            yy = np.full_like(vals, yi)
+            xx = np.tile(X, (len(B), 1))
+            zz = np.tile(B[:, None], (1, len(X)))
+        else:
+            bi, vals = B[idx], data[:, :, idx]
+            zz = np.full_like(vals, bi)
+            xx, yy = np.meshgrid(X, Y)
+        return Surface(
+            x=xx, y=yy, z=zz,
+            surfacecolor=np.nan_to_num(vals, nan=0.0),
+            cmin=np.nanmin(data),
+            cmax=np.nanmax(data),
+            colorscale=cmap,
+            showscale=False,
+            opacity=opacity
+        )
+
+    def make_intersection_lines(ix: int, iy: int, ib: int):
+        x0, y0, b0 = X[ix], Y[iy], B[ib]
+        return [
+            Scatter3d(x=[x0, x0], y=[y0, y0], z=[B.min(), B.max()],
+                      mode='lines', opacity=1.0,
+                      line=dict(color='yellow', width=4), showlegend=False),
+            Scatter3d(x=[x0, x0], y=[Y.min(), Y.max()], z=[b0, b0],
+                      mode='lines', opacity=1.0,
+                      line=dict(color='yellow', width=4), showlegend=False),
+            Scatter3d(x=[X.min(), X.max()], y=[y0, y0], z=[b0, b0],
+                      mode='lines', opacity=1.0,
+                      line=dict(color='yellow', width=4), showlegend=False)
+        ]
+
+    ix0, iy0, ib0 = len(X)//2, len(Y)//2, len(B)//2
+    vol_op0, sl_op0, pl0, ph0 = 0.2, init_opacity, 2.0, 99.5
+
+    cm_x = Dropdown(options=colorscale_list, value='viridis', layout={'width':'200px'})
+    cm_y = Dropdown(options=colorscale_list, value='viridis', layout={'width':'200px'})
+    cm_b = Dropdown(options=colorscale_list, value='viridis', layout={'width':'200px'})
+
+    vol_op_slider = FloatSlider(value=vol_op0, min=0, max=1, step=0.05, description='Vol', layout={'width':'200px'})
+    ix_slider = IntSlider(value=ix0, min=0, max=len(X)-1, layout={'width':'200px'})
+    iy_slider = IntSlider(value=iy0, min=0, max=len(Y)-1, layout={'width':'200px'})
+    ib_slider = IntSlider(value=ib0, min=0, max=len(B)-1, layout={'width':'200px'})
+
+    ix_label = HTML(f"{X[ix0]:.3g}", layout={'width':'200px'})
+    iy_label = HTML(f"{Y[iy0]:.3g}", layout={'width':'200px'})
+    ib_label = HTML(f"{B[ib0]:.3g}", layout={'width':'200px'})
+
+    opx_slider = FloatSlider(value=sl_op0, min=0, max=1, step=0.05, layout={'width':'200px'})
+    opy_slider = FloatSlider(value=sl_op0, min=0, max=1, step=0.05, layout={'width':'200px'})
+    opb_slider = FloatSlider(value=sl_op0, min=0, max=1, step=0.05, layout={'width':'200px'})
+
+    lpx_slider = FloatSlider(value=0.3, min=0, max=1, step=0.05, layout={'width':'200px'})
+    lpy_slider = FloatSlider(value=0.3, min=0, max=1, step=0.05, layout={'width':'200px'})
+    lpb_slider = FloatSlider(value=0.3, min=0, max=1, step=0.05, layout={'width':'200px'})
+
+    plx_slider = FloatSlider(value=pl0, min=0, max=50, step=0.1, layout={'width':'200px'})
+    phx_slider = FloatSlider(value=ph0, min=50, max=100, step=0.1, layout={'width':'200px'})
+    ply_slider = FloatSlider(value=pl0, min=0, max=50, step=0.1, layout={'width':'200px'})
+    phy_slider = FloatSlider(value=ph0, min=50, max=100, step=0.1, layout={'width':'200px'})
+    plb_slider = FloatSlider(value=pl0, min=0, max=50, step=0.1, layout={'width':'200px'})
+    phb_slider = FloatSlider(value=ph0, min=50, max=100, step=0.1, layout={'width':'200px'})
+
+    # --- Camera sliders
+    eye_x = FloatSlider(value=init_eye[0], min=-2, max=2, step=0.01, description='eye_x', layout={'width':'250px'})
+    eye_y = FloatSlider(value=init_eye[1], min=-2, max=2, step=0.01, description='eye_y', layout={'width':'250px'})
+    eye_z = FloatSlider(value=init_eye[2], min=-2, max=2, step=0.01, description='eye_z', layout={'width':'250px'})
+
+    center_x = FloatSlider(value=init_center['x'], min=-2, max=2, step=0.01, description='center_x', layout={'width':'250px'})
+    center_y = FloatSlider(value=init_center['y'], min=-2, max=2, step=0.01, description='center_y', layout={'width':'250px'})
+    center_z = FloatSlider(value=init_center['z'], min=-2, max=2, step=0.01, description='center_z', layout={'width':'250px'})
+
+    up_x = FloatSlider(value=init_up['x'], min=-1, max=1, step=0.01, description='up_x', layout={'width':'250px'})
+    up_y = FloatSlider(value=init_up['y'], min=-1, max=1, step=0.01, description='up_y', layout={'width':'250px'})
+    up_z = FloatSlider(value=init_up['z'], min=-1, max=1, step=0.01, description='up_z', layout={'width':'250px'})
+
+    sx0 = make_slice('x', ix0, sl_op0, pl0, ph0, cm_x.value)
+    sy0 = make_slice('y', iy0, sl_op0, pl0, ph0, cm_y.value)
+    sb0 = make_slice('bias', ib0, sl_op0, pl0, ph0, cm_b.value)
+    lines0 = make_intersection_lines(ix0, iy0, ib0)
+
+    def get_camera_dict():
+        return dict(
+            eye=dict(x=eye_x.value, y=eye_y.value, z=eye_z.value),
+            center=dict(x=center_x.value, y=center_y.value, z=center_z.value),
+            up=dict(x=up_x.value, y=up_y.value, z=up_z.value)
+        )
+
+    fig = go.FigureWidget(data=[
+        Volume(
+            x=np.repeat(X, len(Y)*len(B)),
+            y=np.tile(np.repeat(Y, len(X)), len(B)),
+            z=np.tile(B, len(X)*len(Y)),
+            value=flat_vals,
+            opacity=0.2,
+            isomin=np.nanmin(data),
+            isomax=np.nanmax(data),
+            caps=dict(x_show=False, y_show=False, z_show=False),
+            colorscale='viridis',
+            showscale=True
+        ),
+        sx0, sy0, sb0, *lines0
+    ])
+    fig.update_layout(
+        title=f"{var_name} Volume + 3 Slices",
+        scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='bias_mV',
+            aspectmode='auto',
+            camera=get_camera_dict()
+        ),
+        margin=dict(l=0, r=0, b=0, t=30),
+        width=800, height=600
+    )
+
+    def on_change(_):
+        ix, iy, ib = ix_slider.value, iy_slider.value, ib_slider.value
+        vals = {
+            'opv': vol_op_slider.value,
+            'opx': opx_slider.value, 'opy': opy_slider.value, 'opb': opb_slider.value,
+            'lpx': lpx_slider.value, 'lpy': lpy_slider.value, 'lpb': lpb_slider.value,
+            'plx': plx_slider.value, 'phx': phx_slider.value,
+            'ply': ply_slider.value, 'phy': phy_slider.value,
+            'plb': plb_slider.value, 'phb': phb_slider.value,
+            'cmx': cm_x.value, 'cmy': cm_y.value, 'cmb': cm_b.value
+        }
+        ix_label.value = f"{X[ix]:.3g}"
+        iy_label.value = f"{Y[iy]:.3g}"
+        ib_label.value = f"{B[ib]:.3g}"
+
+        sx = make_slice('x', ix, vals['opx'], vals['plx'], vals['phx'], vals['cmx'])
+        sy = make_slice('y', iy, vals['opy'], vals['ply'], vals['phy'], vals['cmy'])
+        sb = make_slice('bias', ib, vals['opb'], vals['plb'], vals['phb'], vals['cmb'])
+        new_lines = make_intersection_lines(ix, iy, ib)
+
+        with fig.batch_update():
+            fig.data[0].opacity = vals['opv']
+            for i, slc in enumerate([sx, sy, sb], start=1):
+                fig.data[i].x = slc.x; fig.data[i].y = slc.y; fig.data[i].z = slc.z
+                fig.data[i].surfacecolor = slc.surfacecolor
+                fig.data[i].opacity = slc.opacity; fig.data[i].colorscale = slc.colorscale
+            for k, ln in enumerate(new_lines, start=4):
+                fig.data[k].x = ln.x; fig.data[k].y = ln.y; fig.data[k].z = ln.z
+            fig.data[4].opacity = vals['lpb']
+            fig.data[5].opacity = vals['lpy']
+            fig.data[6].opacity = vals['lpx']
+
+    # 카메라 슬라이더용 콜백
+    def camera_update(_):
+        fig.layout.scene.camera = get_camera_dict()
+
+    # 슬라이더 이벤트 등록
+    for w in (
+        vol_op_slider, ix_slider, iy_slider, ib_slider,
+        opx_slider, opy_slider, opb_slider,
+        lpx_slider, lpy_slider, lpb_slider,
+        plx_slider, phx_slider, ply_slider, phy_slider, plb_slider, phb_slider,
+        cm_x, cm_y, cm_b
+    ):
+        w.observe(on_change, names='value')
+
+    # 카메라 슬라이더도 등록
+    for cam_slider in (
+        eye_x, eye_y, eye_z,
+        center_x, center_y, center_z,
+        up_x, up_y, up_z
+    ):
+        cam_slider.observe(camera_update, names='value')
+
+    header = HBox([
+        Label('Axis', layout={'width':'200px'}),
+        Label('Index', layout={'width':'200px'}),
+        Label('Value', layout={'width':'200px'}),
+        Label('Slice Opac', layout={'width':'200px'}),
+        Label('Line Opac', layout={'width':'200px'}),
+        Label('Low %', layout={'width':'200px'}),
+        Label('High %', layout={'width':'200px'}),
+        Label('CMap', layout={'width':'200px'}),
+    ])
+    row_vol = HBox([Label('Vol', layout={'width':'60px'}), vol_op_slider, Label('', layout={'width':'150px'})])
+    row_x   = HBox([Label('X', layout={'width':'60px'}), ix_slider, ix_label, opx_slider, lpx_slider, plx_slider, phx_slider, cm_x])
+    row_y   = HBox([Label('Y', layout={'width':'60px'}), iy_slider, iy_label, opy_slider, lpy_slider, ply_slider, phy_slider, cm_y])
+    row_b   = HBox([Label('Bias', layout={'width':'60px'}), ib_slider, ib_label, opb_slider, lpb_slider, plb_slider, phb_slider, cm_b])
+
+    camera_box = VBox([
+        Label("Camera Eye :"),
+        HBox([eye_x, eye_y, eye_z]),
+        Label("Camera Center :"),
+        HBox([center_x, center_y, center_z]),
+        Label("Camera Up :"),
+        HBox([up_x, up_y, up_z]),
+    ])
+    display(VBox([header, row_vol, row_x, row_y, row_b, camera_box]))
+    display(fig)
+
+
+
+plot_interactive_volume_and_three_slices(
+    ds_opt2,
+    var_name='cluster_umap_HDBSCAN0_L0',
+    #colorscale='Viridis',
+    init_opacity=0.5,
+)
 
 # +
 plot_interactive_volume_and_three_slices(
     ds_opt2,
-    var_name='cluster_umap_HDBSCAN1_L1',
-    colorscale='Viridis',
-    init_opacity=0.5
+    var_name='LDOS',
+    #colorscale='Viridis',
+    init_opacity=0.5,
+    camera_eye=(1.2, -1.4, 1.0),
+    camera_center={'x':0.0, 'y':0.3, 'z':-0.2},
+    camera_up={'x':0, 'y':0, 'z':0.3}
 
 )
+# -
+
+
+
 
 
 # +
 plot_interactive_volume_and_three_slices(
     ds_opt2,
     var_name='LDOS',
-    colorscale='Viridis',
     init_opacity=0.5
 
 )
+# -
+ds_opt2.ZB_mask.isnull().plot()
+
+# +
+null_ratio = ds_opt2.ZB_mask.isnull().sum() / ds_opt2.ZB_mask.size
+
+
+print ("Total area pixels: ", ds_opt2.ZB_mask.size)
+print ("Masked Superconducting pixels: ", ds_opt2.ZB_mask.isnull().sum().values)
+
+print(f"Superconducting area : {null_ratio.item():.2%}")
+
+# -
+
+ratio_0
+
+# +
+# total number of peaks in fitting area
+print ('size of peaks-space from fitting area:',
+       ds_opt2.peak_center.size)
+
+print ('Number of alll deconvoluted peaks:',
+       ds_opt2.peak_center.notnull().sum().values)
+
+ratio_0 = ds_opt2.cluster_umap_HDBSCAN0.where(
+    ds_opt2.cluster_umap_HDBSCAN0==0,
+    drop=True).notnull().sum().values/ ds_opt2.peak_center.notnull().sum().values
+ratio_1 = ds_opt2.cluster_umap_HDBSCAN0.where(
+    ds_opt2.cluster_umap_HDBSCAN0==1,
+    drop=True).notnull().sum().values/ ds_opt2.peak_center.notnull().sum().values
+ratio_2 = ds_opt2.cluster_umap_HDBSCAN0.where(
+    ds_opt2.cluster_umap_HDBSCAN0==2,
+    drop=True).notnull().sum().values/ ds_opt2.peak_center.notnull().sum().values
+
+print ('Number peaks in cluster 0:',
+       ds_opt2.cluster_umap_HDBSCAN0.where(
+           ds_opt2.cluster_umap_HDBSCAN0==0,drop=True
+       ).notnull().sum().values, f", ratio  : {ratio_0:.2%}")    
+      
+print ('Number peaks in cluster 1:',
+       ds_opt2.cluster_umap_HDBSCAN0.where(
+           ds_opt2.cluster_umap_HDBSCAN0==1,drop=True
+       ).notnull().sum().values, f" ,ratio  : {ratio_1:.2%}")    
+    
+print ('Number peaks in cluster 2:',
+       ds_opt2.cluster_umap_HDBSCAN0.where(
+           ds_opt2.cluster_umap_HDBSCAN0==2,drop=True
+       ).notnull().sum().values, f", ratio  : {ratio_2:.2%}")    
+      
+
+
+# +
+# total number of peaks in fitting area
+print ('size of peaks-space from fitting area:',
+       ds_opt2.peak_center.size)
+
+print ('Number of alll deconvoluted peaks:',
+       ds_opt2.peak_center.notnull().sum().values)
+
+ratio_0 = ds_opt2.cluster_umap_HDBSCAN1.where(
+    ds_opt2.cluster_umap_HDBSCAN1==0,
+    drop=True).notnull().sum().values/ ds_opt2.peak_center.notnull().sum().values
+ratio_1 = ds_opt2.cluster_umap_HDBSCAN1.where(
+    ds_opt2.cluster_umap_HDBSCAN1==1,
+    drop=True).notnull().sum().values/ ds_opt2.peak_center.notnull().sum().values
+ratio_2 = ds_opt2.cluster_umap_HDBSCAN1.where(
+    ds_opt2.cluster_umap_HDBSCAN1==2,
+    drop=True).notnull().sum().values/ ds_opt2.peak_center.notnull().sum().values
+ratio_3 = ds_opt2.cluster_umap_HDBSCAN1.where(
+    ds_opt2.cluster_umap_HDBSCAN1==3,
+    drop=True).notnull().sum().values/ ds_opt2.peak_center.notnull().sum().values
+ratio_4 = ds_opt2.cluster_umap_HDBSCAN1.where(
+    ds_opt2.cluster_umap_HDBSCAN1==4,
+    drop=True).notnull().sum().values/ ds_opt2.peak_center.notnull().sum().values
+ratio_5 = ds_opt2.cluster_umap_HDBSCAN1.where(
+    ds_opt2.cluster_umap_HDBSCAN1==5,
+    drop=True).notnull().sum().values/ ds_opt2.peak_center.notnull().sum().values
+
+print ('Number peaks in cluster 0:',
+       ds_opt2.cluster_umap_HDBSCAN1.where(
+           ds_opt2.cluster_umap_HDBSCAN1==0,drop=True
+       ).notnull().sum().values, f", ratio  : {ratio_0:.2%}")    
+      
+print ('Number peaks in cluster 1:',
+       ds_opt2.cluster_umap_HDBSCAN1.where(
+           ds_opt2.cluster_umap_HDBSCAN1==1,drop=True
+       ).notnull().sum().values, f" ,ratio  : {ratio_1:.2%}")    
+    
+print ('Number peaks in cluster 2:',
+       ds_opt2.cluster_umap_HDBSCAN1.where(
+           ds_opt2.cluster_umap_HDBSCAN1==2,drop=True
+       ).notnull().sum().values, f", ratio  : {ratio_2:.2%}")    
+      
+print ('Number peaks in cluster 3:',
+       ds_opt2.cluster_umap_HDBSCAN1.where(
+           ds_opt2.cluster_umap_HDBSCAN1==0,drop=True
+       ).notnull().sum().values, f", ratio  : {ratio_3:.2%}")    
+      
+print ('Number peaks in cluster 4:',
+       ds_opt2.cluster_umap_HDBSCAN1.where(
+           ds_opt2.cluster_umap_HDBSCAN1==4,drop=True
+       ).notnull().sum().values, f", ratio  : {ratio_4:.2%}")    
+      
+print ('Number peaks in cluster 5:',
+       ds_opt2.cluster_umap_HDBSCAN1.where(
+           ds_opt2.cluster_umap_HDBSCAN1==5,drop=True
+       ).notnull().sum().values, f", ratio  : {ratio_5:.2%}")    
 
 
 # +
@@ -14186,15 +16090,385 @@ def plot_interactive_mesh_volume(
 
 
 
+
+# +
+# ─── JupyterLab 전용 렌더러 및 필수 패키지 설정 ─────────────────────────────
+import plotly.io as pio
+pio.renderers.default = 'jupyterlab'  # 또는 'plotly_mimetype'
+
+import numpy as np
+import xarray as xr
+import plotly.graph_objects as go
+from skimage import measure
+from ipywidgets import FloatSlider, HBox, VBox, Label
+from IPython.display import display
+
+# ─── 등가면 인터랙티브 메쉬 시각화 함수 정의 ─────────────────────────────────
+def plot_interactive_mesh_volume(
+    ds: xr.Dataset,
+    var_name: str,
+    init_value: float = None,
+    colorscale: str = 'Viridis'
+) -> None:
+    """
+    3D 데이터에서 단일 등가면(isosurface)을 추출하여 Mesh3d로 표시합니다.
+    메쉬 색상은 버텍스 강도에 따라 매핑되며, 실제 (X, Y, bias_mV) 좌표계를 사용합니다.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        3차원 DataArray를 포함한 Dataset.
+    var_name : str
+        DataArray 이름 (dims: Y, X, bias_mV).
+    init_value : float, optional
+        초기 등가면 레벨. None이면 데이터 상위 75th percentile 사용.
+    colorscale : str, optional
+        Plotly colorscale 이름.
+    """
+    # 1) 데이터 로드 및 NaN 제거
+    da = ds[var_name]
+    vol = np.nan_to_num(da.values, nan=0.0)
+    Y = da.coords['Y'].values
+    X = da.coords['X'].values
+    B = da.coords['bias_mV'].values
+
+    # 2) 기본 threshold 설정
+    flat = vol.flatten()
+    if init_value is None:
+        init_value = float(np.nanpercentile(flat, 75))
+
+    # 3) 그리드 간격 및 원점
+    dy, dx, dz = Y[1]-Y[0], X[1]-X[0], B[1]-B[0]
+    y0, x0, z0 = Y[0], X[0], B[0]
+
+    # 4) 등가면 계산 함수
+    def compute_mesh(level: float):
+        verts, faces, normals, values = measure.marching_cubes(
+            vol, level=level, spacing=(dy, dx, dz)
+        )
+        if len(verts) == 0:
+            raise RuntimeError(f"No surface at level={level:.3g}")
+        ys = y0 + verts[:, 0]
+        xs = x0 + verts[:, 1]
+        zs = z0 + verts[:, 2]
+        i, j, k = faces.T
+        return xs, ys, zs, i, j, k, values
+
+    # 5) 초기 메쉬 생성
+    xs, ys, zs, i, j, k, vals = compute_mesh(init_value)
+
+    # 6) Plotly Mesh3d trace
+    mesh = go.Mesh3d(
+        x=xs, y=ys, z=zs,
+        i=i, j=j, k=k,
+        intensity=vals,
+        colorscale=colorscale,
+        cmin=flat.min(), cmax=flat.max(),
+        showscale=True,
+        colorbar=dict(title=var_name),
+        opacity=1.0,
+        name='isosurface'
+    )
+
+    # 7) FigureWidget 설정 (축 범위 고정)
+    fig = go.FigureWidget(data=[mesh])
+    fig.update_layout(
+        title=f"{var_name} Isosurface (level={init_value:.3g})",
+        scene=dict(
+            xaxis_title='X', yaxis_title='Y', zaxis_title='bias_mV',
+            xaxis=dict(range=[X.min(), X.max()]),
+            yaxis=dict(range=[Y.min(), Y.max()]),
+            zaxis=dict(range=[B.min(), B.max()]),
+            aspectmode='auto'
+        ),
+        margin=dict(l=0, r=0, b=0, t=40)
+    )
+
+    # 8) 레벨 조정 슬라이더
+    slider = FloatSlider(
+        value=init_value,
+        min=float(flat.min()), max=float(flat.max()),
+        step=(flat.max()-flat.min())/200,
+        description='Level:',
+        continuous_update=False,
+        layout={'width': '600px'}
+    )
+
+    # 9) 콜백 정의
+    def on_value_change(change):
+        lvl = change['new']
+        xs2, ys2, zs2, i2, j2, k2, vals2 = compute_mesh(lvl)
+        with fig.batch_update():
+            fig.data[0].x, fig.data[0].y, fig.data[0].z = xs2, ys2, zs2
+            fig.data[0].i, fig.data[0].j, fig.data[0].k = i2, j2, k2
+            fig.data[0].intensity = vals2
+            fig.layout.title.text = f"{var_name} Isosurface (level={lvl:.3g})"
+
+    slider.observe(on_value_change, names='value')
+
+    # 10) 위젯과 Figure를 분리하여 두 번 display 호출
+    control_box = HBox([Label("Level:"), slider])
+    display(control_box)
+    display(fig)
+
+
+
 # -
 
-plot_interactive_mesh_volume(ds_opt2, 'cluster_umap_HDBSCAN1_L1')
+plot_interactive_mesh_volume(ds_opt2, 'cluster_umap_HDBSCAN0_L0')
 
 plot_interactive_mesh_volume(ds_opt2, 'LDOS')
 
 
 
-ds_opt2
+# +
+import numpy as np
+import xarray as xr
+import plotly.graph_objects as go
+from ipywidgets import FloatSlider, HBox, VBox, Label
+from IPython.display import display
+
+def plot_voxel_volume(
+    ds: xr.Dataset,
+    var_name: str,
+    init_thresh: float = None,
+    colorscale: str = 'Viridis'
+) -> None:
+    """
+    Display a 3D voxel rendering where all voxels above a threshold are shown.
+    NaN values are ignored entirely, and voxels are rendered only if value > threshold.
+    """
+
+    # 1. Load data
+    da = ds[var_name]
+    vol = da.values
+    Y = da.coords['Y'].values
+    X = da.coords['X'].values
+    B = da.coords['bias_mV'].values
+
+    # 2. Flatten valid data for stat computation
+    flat = vol[~np.isnan(vol)]
+    if flat.size == 0:
+        raise ValueError("All values are NaN. Cannot render volume.")
+
+    vmin, vmax = float(flat.min()), float(flat.max())
+    if init_thresh is None:
+        init_thresh = np.nanpercentile(flat, 80)
+
+    # 3. Mask: Only values above threshold & not NaN
+    def compute_voxel_values(thresh):
+        mask = (vol > thresh) & ~np.isnan(vol)
+        return np.where(mask, vol, 0.0).flatten()
+
+    masked_vals = compute_voxel_values(init_thresh)
+
+    # 4. Construct the voxel figure
+    fig = go.FigureWidget(data=[
+        go.Volume(
+            x=np.repeat(X, len(Y)*len(B)),
+            y=np.tile(np.repeat(Y, len(X)), len(B)),
+            z=np.tile(B, len(X)*len(Y)),
+            value=masked_vals,
+            isomin=init_thresh,
+            isomax=vmax,
+            opacity=1.0,
+            surface_count=1,
+            colorscale=colorscale,
+            showscale=True
+        )
+    ])
+
+    fig.update_layout(
+        title=f"{var_name} Voxel above threshold {init_thresh:.3g}",
+        scene=dict(
+            xaxis_title='X', yaxis_title='Y', zaxis_title='bias_mV',
+            xaxis=dict(range=[X.min(), X.max()]),
+            yaxis=dict(range=[Y.min(), Y.max()]),
+            zaxis=dict(range=[B.min(), B.max()]),
+            aspectmode='auto'
+        ),
+        margin=dict(l=0, r=0, b=0, t=40)
+    )
+
+    # 5. Slider for threshold
+    slider = FloatSlider(
+        value=init_thresh,
+        min=vmin,
+        max=vmax,
+        step=(vmax - vmin) / 200,
+        description='thresh:',
+        continuous_update=False,
+        layout={'width': '500px'}
+    )
+
+    def on_thresh_change(change):
+        lvl = change['new']
+        new_vals = compute_voxel_values(lvl)
+        with fig.batch_update():
+            fig.data[0].value = new_vals
+            fig.data[0].isomin = lvl
+            fig.layout.title.text = f"{var_name} Voxel above threshold {lvl:.3g}"
+
+    slider.observe(on_thresh_change, names='value')
+
+    # 6. Display
+    display(VBox([HBox([Label("threshold:"), slider]), fig]))
+
+
+
+
+# +
+import numpy as np
+import xarray as xr
+import plotly.graph_objects as go
+from ipywidgets import FloatSlider, HBox, VBox, Label
+from IPython.display import display
+
+def plot_voxel_volume(
+    ds: xr.Dataset,
+    var_name: str,
+    init_thresh: float = None,
+    colorscale: str = 'Viridis'
+) -> None:
+    """
+    Display a 3D voxel rendering where all voxels above a threshold are shown.
+    NaN values are ignored entirely, and voxels are rendered only if value > threshold.
+    """
+
+    # 1. Load data
+    da = ds[var_name]
+    vol = da.values
+    Y = da.coords['Y'].values
+    X = da.coords['X'].values
+    B = da.coords['bias_mV'].values
+
+    # 2. Flatten valid data for stat computation
+    flat = vol[~np.isnan(vol)]
+    if flat.size == 0:
+        raise ValueError("All values are NaN. Cannot render volume.")
+
+    vmin, vmax = float(flat.min()), float(flat.max())
+    if init_thresh is None:
+        init_thresh = np.nanpercentile(flat, 80)
+
+    # 3. Mask: Only values above threshold & not NaN
+    def compute_voxel_values(thresh):
+        mask = (vol > thresh) & ~np.isnan(vol)
+        return np.where(mask, vol, 0.0).flatten()
+
+    masked_vals = compute_voxel_values(init_thresh)
+
+    # 4. Construct the voxel figure
+    fig = go.FigureWidget(data=[
+        go.Volume(
+            x=np.repeat(X, len(Y)*len(B)),
+            y=np.tile(np.repeat(Y, len(X)), len(B)),
+            z=np.tile(B, len(X)*len(Y)),
+            value=masked_vals,
+            isomin=init_thresh,
+            isomax=vmax,
+            opacity=1.0,
+            surface_count=1,
+            colorscale=colorscale,
+            showscale=True
+        )
+    ])
+
+    fig.update_layout(
+        title=f"{var_name} Voxel above threshold {init_thresh:.3g}",
+        scene=dict(
+            xaxis_title='X', yaxis_title='Y', zaxis_title='bias_mV',
+            xaxis=dict(range=[X.min(), X.max()]),
+            yaxis=dict(range=[Y.min(), Y.max()]),
+            zaxis=dict(range=[B.min(), B.max()]),
+            aspectmode='auto'
+        ),
+        margin=dict(l=0, r=0, b=0, t=40)
+    )
+
+    # 5. Slider for threshold
+    slider = FloatSlider(
+        value=init_thresh,
+        min=vmin,
+        max=vmax,
+        step=(vmax - vmin) / 200,
+        description='thresh:',
+        continuous_update=False,
+        layout={'width': '500px'}
+    )
+
+    def on_thresh_change(change):
+        lvl = change['new']
+        new_vals = compute_voxel_values(lvl)
+        with fig.batch_update():
+            fig.data[0].value = new_vals
+            fig.data[0].isomin = lvl
+            fig.layout.title.text = f"{var_name} Voxel above threshold {lvl:.3g}"
+
+    slider.observe(on_thresh_change, names='value')
+
+    # 6. Display slider and figure separately
+    display(HBox([Label("threshold:"), slider]))
+    display(fig)
+
+
+
+# -
+
+plot_voxel_volume(ds_opt2, var_name='LDOS', init_thresh=1e-11, colorscale='Viridis')
+
+
+ds_opt2.LDOS
+data = ds_opt2.LDOS.sel(X = slice (1E-7,1.2E-7),Y = slice (2E-7,2.2E-7)).values
+data
+
+# +
+import plotly.io as pio
+pio.renderers.default = 'jupyterlab'   # 또는 'notebook_connected'
+
+import numpy as np
+# data = da.values  # 이미 준비된 3D numpy 배열
+x = np.arange(data.shape[2])
+y = np.arange(data.shape[1])
+z = np.arange(data.shape[0])
+X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+
+from plotly.graph_objs import Volume
+from plotly.graph_objects import FigureWidget
+from IPython.display import display
+
+# 볼륨 렌더링
+vol = FigureWidget(data=[Volume(
+    x=X.flatten(),
+    y=Y.flatten(),
+    z=Z.flatten(),
+    value=data.flatten(),
+    isomin=np.nanmin(data),
+    isomax=np.nanmax(data),
+    opacity=0.2,         # 0.01 → 0.2 로 높였습니다
+    surface_count=15,    # 등가면 레벨 수
+    colorscale='Viridis',
+    showscale=True
+)])
+
+vol.update_layout(
+    title="3D Volume Rendering",
+    scene=dict(
+        xaxis=dict(title='X', range=[X.min(), X.max()]),
+        yaxis=dict(title='Y', range=[Y.min(), Y.max()]),
+        zaxis=dict(title='Z', range=[Z.min(), Z.max()]),
+        aspectmode='auto'
+    ),
+    margin=dict(l=0, r=0, b=0, t=30)
+)
+
+display(vol)
+
+# -
+
+
+# #### plotly voxel plotting  --> memory issue ==> mayavi is better option .
+#
 
 # +
 import numpy as np
@@ -14365,87 +16639,43 @@ def plot_overlay_volume_with_slices(
         HBox([iy_idx, chk_y, op_y]),
         HBox([ib_idx, chk_b, op_b])
     ])
-    display(VBox([controls, fig]))
 
-
+    # 10) display 분리 (위젯과 Figure 따로 출력)
+    display(controls)
+    display(fig)
 
 # -
 
+
+
 plot_overlay_volume_with_slices(
     ds_opt2,
-    var_name='cluster_umap_HDBSCAN1_L0',
+    var_name='cluster_umap_HDBSCAN0_L0',
     colorscale='Viridis',
     init_vol_opacity=0.2,
     init_slice_opacity=0.5
 )
 
-
-
-# +
-import numpy as np
-
-# Create a 3D grid of scalar values (e.g., a 3D Gaussian blob)
-x = np.linspace(-2, 2, 50)
-y = np.linspace(-2, 2, 50)
-z = np.linspace(-2, 2, 50)
-X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
-values = np.exp(-(X**2 + Y**2 + Z**2))  # 3D Gaussian
-
-# Save data for visualization
-import plotly.io as pio
-import plotly.graph_objects as go
-
-# 3D volume rendering with Plotly
-volume = go.Volume(
-    x=X.flatten(),
-    y=Y.flatten(),
-    z=Z.flatten(),
-    value=values.flatten(),
-    isomin=0.1,
-    isomax=1.0,
-    opacity=0.1,  # overall opacity
-    surface_count=15,  # number of isosurfaces
-    colorscale='Viridis',
-)
-
-# 3D isosurface rendering
-isosurface = go.Isosurface(
-    x=X.flatten(),
-    y=Y.flatten(),
-    z=Z.flatten(),
-    value=values.flatten(),
-    isomin=0.5,
-    isomax=0.5,
-    surface_count=1,
-    caps=dict(x_show=False, y_show=False, z_show=False),
-    colorscale='Reds',
-    opacity=0.6
-)
-
-fig = go.Figure(data=[volume, isosurface])
-fig.update_layout(
-    scene=dict(
-        xaxis_title='X',
-        yaxis_title='Y',
-        zaxis_title='Z',
-    ),
-    title='3D Volume and Isosurface Visualization'
-)
-
-# -
-
-
-
-
-
 ds_opt2
 
+ds_opt2.ZB_mask.notnull().plot()
+
+GS_LDOS_2T_003.where(ds_opt2.ZB_mask.notnull())
+
+
+
+
+# # Figure 4 defect position vs False Positive detection 
+
 # +
-ds_opt2.LDOS.sel(bias_mV=0).plot()
+## raw ZBC map
+# -
 
-#ds_opt2.cluster_umap_HDBSCAN1_L0.sel(bias_mV=0).plot()
+# da = ds_opt2.LDOS.sel(bias_mV=0)#
+# da = ds_opt2.cluster_umap_HDBSCAN3_L0.sel(bias_mV=0)
 
-#cluster_umap_HDBSCAN1_L1
+
+
 
 # +
 import numpy as np
@@ -14453,8 +16683,8 @@ import matplotlib.pyplot as plt
 
 # 1) 대상 DataArray 추출
 #da = ds_opt2.LDOS.sel(bias_mV=0)#
-#da = ds_opt2.cluster_umap_HDBSCAN1_L0.sel(bias_mV=0)
-da = ds_opt2.cluster_umap_HDBSCAN1_L1.sel(bias_mV=0)
+da = ds_opt2.cluster_umap_HDBSCAN0_L0.sel(bias_mV=0)
+#da = ds_opt2.cluster_umap_HDBSCAN3_L0.sel(bias_mV=0)
 #da = ds_opt2.cluster_umap_HDBSCAN1_L2.sel(bias_mV=0)
 #da = ds_opt2.cluster_umap_HDBSCAN1_L3.sel(bias_mV=0)
 
@@ -14479,16 +16709,262 @@ plt.show()
 
 # -
 
-ds_opt2.ZB_mask.notnull().plot()
+#ds_opt2.LDOS.sel(bias_mV=0).plot()
+ds_opt2.cluster_umap_HDBSCAN1_L0.sel(bias_mV=0).plot()
 
-GS_LDOS_2T_003.where(ds_opt2.ZB_mask.notnull())
+# +
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn_image as isns
+import ipywidgets as widgets
+from matplotlib.patches import Rectangle
+
+# 1. bias_mV=0에서 원본 배열 추출 (회전·전치 일체 없음)
+ldos_img    = ds_opt2.LDOS.sel(bias_mV=0).values
+cluster_img = ds_opt2.cluster_umap_HDBSCAN0_L0.sel(bias_mV=0).values
+
+# 2. 두번째 이미지 전용 NaN→흰색 처리용 cmap 복사본 생성
+cmap_cluster = plt.cm.get_cmap("viridis").copy()
+cmap_cluster.set_bad(color="white")
+
+# 3. 전체 컬러맵 범위 계산
+data_min = np.nanmin([ldos_img.min(), cluster_img.min()])
+data_max = np.nanmax([ldos_img.max(), cluster_img.max()])
+
+# 4. 업데이트 콜백 정의
+def update(vmin, vmax):
+    plt.close("all")
+    isns.set_context("notebook")
+    isns.set_image(cmap="viridis", despine=True)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+
+    # ── 첫번째: LDOS, 흰색 스케일바를 왼쪽 아래에
+    im1 = isns.imgplot(
+        ldos_img,
+        ax=ax1,
+        dx=0.5,
+        units="nm",
+        vmin=vmin,
+        vmax=vmax,
+        cbar=False,
+        origin="lower",
+        scale_bar_kwargs={'location': 'lower left', 'color': 'white'}
+    )
+    ax1.axis("off")
+    ax1.set_aspect("equal")
+
+    # ── 두번째: Cluster, 검은색 스케일바를 왼쪽 아래에, NaN→흰색 cmap
+    im2 = isns.imgplot(
+        cluster_img,
+        ax=ax2,
+        cmap=cmap_cluster,
+        dx=0.5,
+        units="nm",
+        vmin=vmin,
+        vmax=vmax,
+        cbar=False,
+        origin="lower",
+        scale_bar_kwargs={'location': 'lower left', 'color': 'black'}
+    )
+    ax2.axis("off")
+    ax2.set_aspect("equal")
+
+    # ── 두번째 그림에만 검은색 테두리 추가
+    rect = Rectangle(
+        (0, 0), 1, 1,
+        transform=ax2.transAxes,
+        fill=False,
+        edgecolor="black",
+        linewidth=2
+    )
+    ax2.add_patch(rect)
+
+    # 각 이미지별 컬러바 추가
+    fig.colorbar(im1.get_images()[0], ax=ax1, fraction=0.046, pad=0.04)
+    fig.colorbar(im2.get_images()[0], ax=ax2, fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+    plt.show()
+
+# 5. 슬라이더 생성 및 표시
+vmin_slider = widgets.FloatSlider(
+    value=data_min,
+    min=data_min,
+    max=data_max,
+    step=(data_max - data_min) / 200,
+    description="vmin:"
+)
+vmax_slider = widgets.FloatSlider(
+    value=data_max,
+    min=data_min,
+    max=data_max,
+    step=(data_max - data_min) / 200,
+    description="vmax:"
+)
+
+widgets.interactive(update, vmin=vmin_slider, vmax=vmax_slider)
+# -
 
 
-GS_LDOS_2T_003= xr.open_dataset('GS_LDOS_2T_003.nc')
+
+
+# +
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn_image as isns
+import ipywidgets as widgets
+from matplotlib.patches import Rectangle
+from IPython.display import display
+import io
+
+# 1. Extract LDOS and Cluster image at bias = 0 mV
+#ldos_img = ds_opt2.LDOS.sel(bias_mV=0).values
+ldos_img = ds_opt2.where(ds_opt2.ZB_mask.notnull()).LDOS.sel(bias_mV=0).values
+
+
+cluster_img = ds_opt2.cluster_umap_HDBSCAN0_L0.sel(bias_mV=0).values
+
+# 2. Define colormaps
+cmap_common = plt.cm.get_cmap("viridis").copy()
+cmap_common.set_bad(color="white")
+
+cmap_contrib = plt.cm.get_cmap("Reds").copy()
+cmap_contrib.set_bad(color="white")
+
+# 3. Compute the ratio image: Cluster / LDOS
+with np.errstate(divide='ignore', invalid='ignore'):
+    contrib_img = np.where(
+        np.isfinite(ldos_img) & (ldos_img != 0),
+        cluster_img / ldos_img,
+        np.nan
+    )
+
+# 4. Determine ranges
+ldos_min, ldos_max = np.nanmin(ldos_img), np.nanmax(ldos_img)
+cluster_min, cluster_max = np.nanmin(cluster_img), np.nanmax(cluster_img)
+contrib_min, contrib_max = 0.0, 1.0
+
+# 5. Global reference for current figure
+current_fig = {'fig': None}
+
+# 6. Update function
+def update(vmin_L, vmax_L, vmin_C, vmax_C, vmin_R, vmax_R):
+    """
+    Update three-panel figure and store it in current_fig for saving.
+    """
+    plt.close("all")
+    isns.set_context("notebook")
+    isns.set_image(despine=True)
+
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+
+    im1 = isns.imgplot(ldos_img, ax=ax1, dx=0.5, units="nm",
+                       vmin=vmin_L, vmax=vmax_L, cmap=cmap_common,
+                       cbar=False, origin="lower")
+    ax1.axis("off")
+    ax1.set_aspect("equal")
+    ax1.set_box_aspect(1)
+    ax1.set_title("LDOS")
+    ax1.add_patch(Rectangle((0, 0), 1, 1, transform=ax1.transAxes,
+                        fill=False, edgecolor="black", linewidth=2))
+    fig.colorbar(im1.get_images()[0], ax=ax1, fraction=0.046, pad=0.04)
+
+    im2 = isns.imgplot(cluster_img, ax=ax2, dx=0.5, units="nm",
+                       vmin=vmin_C, vmax=vmax_C, cmap=cmap_common,
+                       cbar=False, origin="lower")
+    ax2.axis("off")
+    ax2.set_aspect("equal")
+    ax2.set_box_aspect(1)
+    ax2.set_title("Cluster")
+    ax2.add_patch(Rectangle((0, 0), 1, 1, transform=ax2.transAxes,
+                            fill=False, edgecolor="black", linewidth=2))
+    fig.colorbar(im2.get_images()[0], ax=ax2, fraction=0.046, pad=0.04)
+
+    im3 = isns.imgplot(contrib_img, ax=ax3, dx=0.5, units="nm",
+                       vmin=vmin_R, vmax=vmax_R, cmap=cmap_contrib,
+                       cbar=False, origin="lower")
+    ax3.axis("off")
+    ax3.set_aspect("equal")
+    ax3.set_box_aspect(1)
+    ax3.set_title("Cluster / LDOS")
+    ax3.add_patch(Rectangle((0, 0), 1, 1, transform=ax3.transAxes,
+                            fill=False, edgecolor="black", linewidth=2))
+    fig.colorbar(im3.get_images()[0], ax=ax3, fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+    current_fig['fig'] = fig
+    plt.show()
+
+# 7. Save button function
+def save_svg(_):
+    """
+    Save the most recently rendered figure as SVG.
+    """
+    fig = current_fig.get('fig')
+    if fig is not None:
+        fig.savefig("ldos_cluster_contrib.svg", format="svg")
+        print("✅ Figure saved as 'ldos_cluster_contrib.svg'")
+
+save_button = widgets.Button(description="💾 Save SVG", button_style='success')
+save_button.on_click(save_svg)
+
+# 8. Sliders
+style = {'description_width': '90px'}
+
+vmin_L = widgets.FloatSlider(value=ldos_min, min=ldos_min, max=ldos_max,
+                             step=(ldos_max - ldos_min)/200,
+                             description="LDOS min:", style=style, readout_format='.2e')
+vmax_L = widgets.FloatSlider(value=ldos_max, min=ldos_min, max=ldos_max,
+                             step=(ldos_max - ldos_min)/200,
+                             description="LDOS max:", style=style, readout_format='.2e')
+
+vmin_C = widgets.FloatSlider(value=cluster_min, min=cluster_min, max=cluster_max,
+                             step=(cluster_max - cluster_min)/200,
+                             description="Clust min:", style=style, readout_format='.2e')
+vmax_C = widgets.FloatSlider(value=cluster_max, min=cluster_min, max=cluster_max,
+                             step=(cluster_max - cluster_min)/200,
+                             description="Clust max:", style=style, readout_format='.2e')
+
+vmin_R = widgets.FloatSlider(value=contrib_min, min=0.0, max=1.0,
+                             step=0.01, description="Ratio min:",
+                             style=style, readout_format='.2e')
+vmax_R = widgets.FloatSlider(value=contrib_max, min=0.0, max=1.0,
+                             step=0.01, description="Ratio max:",
+                             style=style, readout_format='.2e')
+
+# 9. Layout
+ui = widgets.HBox([
+    widgets.VBox([vmin_L, vmax_L]),
+    widgets.VBox([vmin_C, vmax_C]),
+    widgets.VBox([vmin_R, vmax_R]),
+])
+
+# 10. Display everything together
+display(widgets.VBox([
+    ui,
+    widgets.interactive_output(update, {
+        "vmin_L": vmin_L, "vmax_L": vmax_L,
+        "vmin_C": vmin_C, "vmax_C": vmax_C,
+        "vmin_R": vmin_R, "vmax_R": vmax_R,
+    }),
+    save_button
+]))
+
+# -
+
+
+
+# #### 0T data defect position extract 
+#
+
+# +
+#GS_LDOS_2T_003= xr.open_dataset('GS_LDOS_2T_003.nc')
 #GS_LDOS_2T_003
 #GS_LDOS_2T_003.where(ds_opt2.ZB_mask.notnull())
 #GS_LDOS_2T_003.where(ds_opt2.ZB_mask.isnull())
 
+# +
 updated_GS_LDOS_0T002_N_2T003 = xr.open_dataset('updated_GS_LDOS_0T002_N_2T003.nc')
 updated_GS_LDOS_0T002_N_2T003
 
@@ -14497,6 +16973,214 @@ updated_GS_LDOS_0T002_N_2T003_th =  threshold_isodata_xr(updated_GS_LDOS_0T002_N
 
 #updated_GS_LDOS_0T002_N_2T003_th.LDOS.notnull().plot()
 updated_GS_LDOS_0T002_N_2T003_th.LDOS.isnull().plot()
+# -
+
+updated_GS_LDOS_0T002_N_2T003.LDOS.sel(bias_mV=0).plot(cmap = 'viridis')
+
+updated_GS_LDOS_0T002_N_2T003.LDOS.sel(bias_mV=0).where(updated_GS_LDOS_0T002_N_2T003_th.LDOS.notnull()).plot()
+
+# +
+
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn_image as isns
+from matplotlib.patches import Rectangle, Circle
+from matplotlib.colors import Normalize
+
+# 1. Load raw 0T LDOS map and threshold mask
+raw = updated_GS_LDOS_0T002_N_2T003.LDOS.sel(bias_mV=0)
+mask = updated_GS_LDOS_0T002_N_2T003_th.LDOS.notnull()
+masked = raw.where(mask)
+
+# 2. Physical spacing (nm per pixel) and desired circle radius in nm
+dx = raw['X'].values[1] - raw['X'].values[0]
+radius_nm = 3 * dx  # 3 pixels in physical units
+
+# 3. Prepare colormap normalization for border colors
+data_min, data_max = np.nanmin(masked.values), np.nanmax(masked.values)
+norm = Normalize(vmin=data_min, vmax=data_max)
+
+# 4. Configure seaborn-image
+isns.set_context("notebook")
+isns.set_image(despine=True)
+
+# 5. Create figure with two panels
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+# Panel 1: Raw ZBC Map (0 T)
+isns.imgplot(
+    raw,
+    ax=ax1,
+    x='X', y='Y',
+    cmap='viridis', dx=dx, units='nm',
+    origin='lower'
+)
+ax1.set_title("Raw ZBC Map (0 T)")
+
+# Panel 2: Masked ZBC Map (Defect Points Only)
+isns.imgplot(
+    masked,
+    ax=ax2,
+    x='X', y='Y',
+    cmap='viridis', dx=dx, units='nm',
+    origin='lower'
+)
+ax2.set_title("Masked ZBC Map (Defect Points Only)")
+
+# 6. Force correct axis limits (use physical coords)
+ax2.set_xlim(raw['X'].values.min(), raw['X'].values.max())
+ax2.set_ylim(raw['Y'].values.min(), raw['Y'].values.max())
+
+# Add black border around right panel
+ax2.add_patch(Rectangle(
+    (0, 0), 1, 1,
+    transform=ax2.transAxes,
+    fill=False, edgecolor='black', linewidth=2
+))
+
+# 7. Overlay transparent circles (edge only) at each defect location
+ys, xs = np.where(mask.values)
+x_vals = mask['X'].values
+y_vals = mask['Y'].values
+cmap = plt.cm.viridis
+
+for i, j in zip(ys, xs):
+    x0 = x_vals[j]
+    y0 = y_vals[i]
+    amp = float(masked.sel(X=x0, Y=y0, method='nearest').values)
+    edge_color = cmap(norm(amp))
+    circ = Circle(
+        (x0, y0),
+        radius=radius_nm,
+        edgecolor=edge_color,
+        facecolor='none',
+        linewidth=1.5,
+        transform=ax2.transData
+    )
+    ax2.add_patch(circ)
+
+# 8. Finalize and save
+plt.tight_layout()
+plt.savefig('raw_and_masked_ldos_with_defect_circles.svg', format='svg')
+plt.show()
+
+# -
+
+updated_GS_LDOS_0T002_N_2T003.LDOS.sel(bias_mV=0).plot( cmap = 'Blues')
+
+# +
+import numpy as np
+import matplotlib.pyplot as plt
+import ipywidgets as widgets
+from IPython.display import clear_output
+
+# 1. DataArray 불러오기
+da = updated_GS_LDOS_0T002_N_2T003.LDOS.sel(bias_mV=0)
+
+# 2. 슬라이더 초기값 계산
+vmin0 = float(da.min())
+vmax0 = float(da.max())
+
+# 3. 저장용 상태 변수
+current_vmin = vmin0
+current_vmax = vmax0
+
+# 4. 업데이트 함수
+def update(vmin, vmax):
+    global current_vmin, current_vmax
+    current_vmin = vmin
+    current_vmax = vmax
+
+    clear_output(wait=True)
+    fig, ax = plt.subplots()
+    da.plot(
+        ax=ax,
+        cmap='Blues',
+        vmin=vmin,
+        vmax=vmax,
+        add_colorbar=True,
+        cbar_kwargs={'label': 'LDOS'}
+    )
+    ax.set_axis_off()
+    plt.show()
+    display(ui)  # 버튼 다시 표시
+
+# 5. 저장 버튼 콜백
+def save_svg(button):
+    fig, ax = plt.subplots()
+    da.plot(
+        ax=ax,
+        cmap='Blues',
+        vmin=current_vmin,
+        vmax=current_vmax,
+        add_colorbar=True,
+        cbar_kwargs={'label': 'LDOS'}
+    )
+    ax.set_axis_off()
+    plt.tight_layout()
+    plt.savefig("LDOS_export.svg", format="svg", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print("✅ SVG 파일이 저장되었습니다: LDOS_export.svg")
+
+# 6. 슬라이더 및 버튼 생성
+vmin_slider = widgets.FloatSlider(
+    value=vmin0, min=vmin0, max=vmax0,
+    step=(vmax0 - vmin0) / 200,
+    description='vmin:', readout_format='.2e'
+)
+vmax_slider = widgets.FloatSlider(
+    value=vmax0, min=vmin0, max=vmax0,
+    step=(vmax0 - vmin0) / 200,
+    description='vmax:', readout_format='.2e'
+)
+save_button = widgets.Button(description="💾 Save as SVG", button_style="success")
+save_button.on_click(save_svg)
+
+# 7. 인터페이스 묶기
+ui = widgets.VBox([widgets.HBox([vmin_slider, vmax_slider]), save_button])
+widgets.interact(update, vmin=vmin_slider, vmax=vmax_slider)
+
+# -
+
+
+
+'''
+import numpy as np
+import pandas as pd
+
+# ── 사전에 슬라이더 등으로 결정된 threshold (예: 이전에 선택하신 vmin)
+vmin_value = 1.75e-10 # 실제 사용하시는 값으로 대체하세요
+
+# ── 1) bias=0 에서 DataArray 추출
+#da = updated_GS_LDOS_0T002_N_2T003.LDOS.sel(bias_mV=0)
+
+da0 = updated_GS_LDOS_0T002_N_2T003.LDOS.sel(bias_mV=0)
+
+# ── 2) threshold vmin_value 보다 큰 위치만 True 인 Boolean mask 생성
+da_mask = da0 = da0.where(da0>vmin_value)
+
+# ── 3) True 인 인덱스 추출
+y_idx, x_idx = np.where(da_mask.values)
+
+# ── 4) 실제 좌표로 변환
+x_coords = da_mask.coords['X'].values[x_idx]
+y_coords = da_mask.coords['Y'].values[y_idx]
+
+# ── 5) DataFrame 구성
+df_points = pd.DataFrame({
+    'X': x_coords,
+    'Y': y_coords
+}).reset_index(drop=True)
+
+print(df_points.head())
+
+
+df_0T_peaks_points  = df_points 
+df_0T_peaks_points
+## use the cropped area peaks 
+# defect position from cropped area 
+
+'''
 
 # +
 import numpy as np
@@ -14536,26 +17220,21 @@ import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
 from scipy.spatial import cKDTree
+import seaborn_image as isns  # seaborn-image 약어 지정
 
-# — 1) df_0T_peaks_points 예시 DataFrame —
-# — 2) ZB_mask의 notnull 위치 인덱스와 좌표 추출 —
-mask = ds_opt2.ZB_mask.notnull()         # (Y, X) boolean
-y_idx, x_idx = np.where(mask.values)     # True인 인덱스
-X_coords = ds_opt2.X.values[x_idx]       # 해당 열마다 X 좌표
-Y_coords = ds_opt2.Y.values[y_idx]       # 해당 행마다 Y 좌표
+# — (이전 코드와 동일하게) ZB_mask 위치 인덱스 및 좌표, KD-Tree 구성, 거리 계산 부분 —  
+mask = ds_opt2.ZB_mask.notnull()
+y_idx, x_idx = np.where(mask.values)
+X_coords = ds_opt2.X.values[x_idx]
+Y_coords = ds_opt2.Y.values[y_idx]
 
-# — 3) KD-Tree 구성 (peak points) —
 tree = cKDTree(df_0T_peaks_points[['X','Y']].values)
-
-# — 4) 각 ZB_mask 점에서 가장 가까운 peak까지 거리 계산 —
 points = np.column_stack([X_coords, Y_coords])
 distances, _ = tree.query(points, k=1)
 
-# — 5) 거리 값을 원래 그리드 형태로 되돌리기 —
 dist_map = np.full(mask.shape, np.nan, dtype=float)
 dist_map[y_idx, x_idx] = distances
 
-# — 6) xarray.DataArray로 변환 —
 dist_da = xr.DataArray(
     dist_map,
     coords={'Y': ds_opt2.Y, 'X': ds_opt2.X},
@@ -14563,26 +17242,124 @@ dist_da = xr.DataArray(
     name='dist_to_peaks'
 )
 
-# — 7) 거리 지도 플롯 —
-plt.figure(figsize=(6,5))
-im = dist_da.plot(
-    cmap='viridis',
-    add_colorbar=True,
+# 물리적 픽셀 간격 계산
+dx = ds_opt2.X.values[1] - ds_opt2.X.values[0]
+
+# seaborn-image 컨텍스트 설정
+isns.set_context("notebook")
+isns.set_image(despine=True)
+
+# — 그림 그리기 —  
+fig, ax = plt.subplots(figsize=(6, 5))
+
+img = isns.imgplot(
+    dist_da,
+    ax=ax,
+    x='X', y='Y',
+    cmap='magma',
+    dx=dx,
+    units='m',
+    origin='lower',
+    scale_bar=False,            # 스케일바 제거
+    colorbar=True,              # 컬러바 자동 추가
     cbar_kwargs={'label': 'Distance (m)'}
 )
-plt.title('Distance to Nearest Peak (only ZB_mask locations)')
-plt.xlabel('X (m)')
-plt.ylabel('Y (m)')
+
+# 전체 테두리: 모든 spine을 보이게 하고 두께·색상 지정
+for spine in ax.spines.values():
+    spine.set_visible(True)
+    spine.set_edgecolor('black')
+    spine.set_linewidth(2)
+
+ax.set_title('Distance to Nearest Peak (only ZB_mask locations)')
+ax.set_xlabel('X (m)')
+ax.set_ylabel('Y (m)')
+
 plt.tight_layout()
-
-# ◀ 여기서 SVG로 저장
-plt.savefig('distance_to_0T_preexisting_peaks.svg', format='svg', dpi=300, bbox_inches='tight')
-
+plt.savefig(
+    'distance_to_0T_preexisting_peaks_bordered.svg',
+    format='svg',
+    dpi=300,
+    bbox_inches='tight'
+)
 plt.show()
+# -
+
+
+
+
+# +
+import numpy as np
+import matplotlib.pyplot as plt
+import ipywidgets as widgets
+from IPython.display import clear_output
+
+# 1. DataArray 준비
+ldos_da = updated_GS_LDOS_0T002_N_2T003.LDOS.sel(bias_mV=0)
+dist_da = dist_da#ds_opt2.dist_to_peaks  # 박사님께서 저장하신 거리 맵
+
+# 2. LDOS 범위 계산
+vmin0 = float(ldos_da.min())
+vmax0 = float(ldos_da.max())
+
+# 3. 업데이트 함수 정의
+def update(vmin, vmax, alpha):
+    clear_output(wait=True)
+    fig, ax = plt.subplots(figsize=(6,5))
+
+    # LDOS 하단 베이스
+    im1 = ldos_da.plot.imshow(
+        ax=ax,
+        cmap='Blues',
+        vmin=vmin, vmax=vmax,
+        add_colorbar=False
+    )
+
+    # 거리맵 상단 오버레이 (반투명)
+    im2 = dist_da.plot.imshow(
+        ax=ax,
+        cmap='magma',
+        alpha=alpha,
+        add_colorbar=True,
+        cbar_kwargs={'label': 'Distance to Nearest Peak (m)'}
+    )
+
+    ax.set_title("LDOS (blue) + Distance to Nearest Defect (magma overlay)")
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    plt.tight_layout()
+    plt.show()
+
+# 4. 슬라이더 설정
+vmin_slider = widgets.FloatSlider(
+    value=vmin0, min=vmin0, max=vmax0,
+    step=(vmax0 - vmin0)/200,
+    description='vmin:', readout_format='.2e'
+)
+vmax_slider = widgets.FloatSlider(
+    value=vmax0, min=vmin0, max=vmax0,
+    step=(vmax0 - vmin0)/200,
+    description='vmax:', readout_format='.2e'
+)
+alpha_slider = widgets.FloatSlider(
+    value=0.5, min=0.0, max=1.0,
+    step=0.05, description='alpha:'
+)
+
+widgets.interact(update, vmin=vmin_slider, vmax=vmax_slider, alpha=alpha_slider)
 
 # -
 
-grid_LDOS_SnD_pks_0T002_WholeRange.nc
+
+
+# +
+#grid_LDOS_SnD_pks_0T002_WholeRange.nc
+
+# + [markdown] jp-MarkdownHeadingCollapsed=true
+# #### 0T 002 whole area defect position check 
+# -
+
+
 
 grid_0T_002_fit = xr.open_dataset('grid_LDOS_SnD_pks_0T002_WholeRange.nc')
 grid_0T_002_fit
@@ -14688,9 +17465,9 @@ ds_opt2.cluster_umap_HDBSCAN1_L1.sel(bias_mV=0)
 
 
 
+# ### superconducting area mask check 
 
-
-
+GS_LDOS_2T_003 = xr.open_dataset('GS_LDOS_2T_003.nc')
 
 # +
 import numpy as np
@@ -14721,7 +17498,7 @@ for region_label, region_mask in [
 df = pd.DataFrame.from_records(records)
 
 # 3) Plot with seaborn lineplot, showing 95% CI by default
-plt.figure(figsize=(4, 3))
+plt.figure(figsize=(6, 5))
 sns.lineplot(
     data=df,
     x='bias_mV',
@@ -14735,8 +17512,8 @@ sns.lineplot(
 plt.xlabel('Bias (mV)')
 plt.ylabel('LDOS')
 plt.title('')
-# legend를 우하단으로 이동
-plt.legend(loc='upper right', title='')
+# legend를 우상단으로 이동
+plt.legend(loc='upper center', title='')
 
 plt.tight_layout()
 
@@ -14762,7 +17539,7 @@ p0, p99 = np.nanpercentile(da_ldos.values, [0, 99])
 maps = [
     #('Best Fit', ds_opt2.best_fit),
     ('Original LDOS', ds_opt2.LDOS.where(ds_opt2.ZB_mask.notnull())),
-    ('ZBP cluster', ds_opt2.cluster_umap_HDBSCAN1_L1)
+    ('ZBP cluster', ds_opt2.cluster_umap_HDBSCAN3_L0)
 ]
 
 # 3) Create 1×2 grid of subplots with equal aspect ratio
@@ -14858,7 +17635,7 @@ from scipy.spatial import cKDTree
 
 # 1) Prepare the three existing maps at bias = 0 mV
 orig     = ds_opt2.LDOS.where(ds_opt2.ZB_mask.notnull()).sel(bias_mV=0)
-cluster  = ds_opt2.cluster_umap_HDBSCAN1_L1.sel(bias_mV=0)
+cluster  = ds_opt2.cluster_umap_HDBSCAN1_L0.sel(bias_mV=0)
 fraction = (cluster / orig).where(np.isfinite(cluster) & np.isfinite(orig))
 
 # 2) Compute robust color limits
@@ -14953,59 +17730,6 @@ print(f"Pearson r (xarray.corr): {float(corr_da.values):.4f}")
 # -
 
 ds_opt2.LDOS
-
-# +
-import numpy as np
-from mayavi import mlab
-
-# Assuming ds_opt2 is already loaded in the namespace
-# Extract the LDOS data and coordinates
-data = ds_opt2.LDOS.values  # shape (Y, X, bias)
-Y = ds_opt2.Y.values        # length Y
-X = ds_opt2.X.values        # length X
-Z = ds_opt2.bias_mV.values  # length bias
-
-# Create a meshgrid of coordinates matching the data shape
-# indexing='xy' ensures data[y, x, z] corresponds to xx[y,x,z], yy[y,x,z], zz[y,x,z]
-xx, yy, zz = np.meshgrid(X, Y, Z, indexing='xy')
-
-# Create a Mayavi scalar field source
-src = mlab.pipeline.scalar_field(xx, yy, zz, data)
-
-# Initialize the figure with a white background
-mlab.figure(bgcolor=(1, 1, 1), size=(800, 600))
-
-# Volume render the full dataset as semi-transparent
-vol = mlab.pipeline.volume(src)
-# Adjust the opacity unit distance to control overall transparency
-vol._volume_property.set_scalar_opacity_unit_distance(0.1)
-
-# Add an image plane at bias = 0 mV
-# Determine the slice index closest to zero bias
-slice_index = int(np.argmin(np.abs(Z - 0.0)))
-plane = mlab.pipeline.image_plane_widget(
-    src,
-    plane_orientation='z_axes',  # plane perpendicular to Z (bias) axis
-    slice_index=slice_index,
-    colormap='coolwarm',         # choose a diverging colormap
-    opacity=1.0                  # fully opaque slice
-)
-# Disable picking on the plane widget
-plane.ipw.point_picker.enabled = False
-
-# Add axes labels
-mlab.axes(
-    xlabel='X (m)',
-    ylabel='Y (m)',
-    zlabel='bias (mV)',
-    color=(0, 0, 0)  # axes labels in black
-)
-
-# Show the scene
-mlab.show()
-
-# -
-
 
 
 
@@ -15321,10 +18045,317 @@ def cluster_map_2x2panel(ds: xr.Dataset):
 # ds = ds_opt2.copy()
 # cluster_map_2x2panel(ds)
 
+
+# +
+import os
+import numpy as np
+import xarray as xr
+import hvplot.xarray            # enables .hvplot on xarray DataArrays
+import holoviews as hv
+import matplotlib.pyplot as plt
+from IPython.display import display, clear_output
+import ipywidgets as widgets
+
+def cluster_map_2x2panel(ds: xr.Dataset):
+    """
+    Create an interactive 2×2 cluster map dashboard with confirm/save controls.
+
+    Given an xarray.Dataset `ds` containing:
+      - DataArrays: 'LDOS', 'best_fit', 'cluster_maps'
+      - Coordinates: 'bias_mV', 'X', 'Y'
+      - 'cluster_maps' has coordinate 'cluster_label'
+
+    This function will:
+      1) Add nm‐scaled coords 'X_nm','Y_nm' to the dataset.
+      2) Compute global min/max for 'best_fit'.
+      3) Instantiate ipywidgets:
+         - bias_slider: select bias voltage
+         - cluster_left, cluster_right: select two cluster labels
+         - clim_type: 'Percent' or 'Absolute'
+         - clim_lower_pct, clim_upper_pct: percent color limits
+         - clim_lower_val, clim_upper_val: absolute color limits
+         - mode_widget: 'Global' or 'Local' scaling
+         - cmap_dropdown: choose colormap
+         - confirm_btn: render/update 2×2 plot
+         - save_btn: save current view to SVG
+      4) On Confirm:
+         - Slice `LDOS`, `best_fit`, and two `cluster_maps` at chosen bias and labels
+         - Compute color limits based on mode & clim_type
+         - Render a 2×2 HoloViews panel via `hvplot.image`
+      5) On Save:
+         - Build a Matplotlib 2×2 figure with `imshow(..., aspect='equal')`,
+           correct extents, integer tick labels, 10 nm scale bars whose
+           start is at 10% from left and 5% from bottom, with adaptive color
+           on the top‐left plot only and forced black on the other three.
+         - Save to `output_figures/cluster_map2x2.svg`
+         - Print the saved file path
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Input dataset with required variables and coords.
+    """
+    # 1) Prepare dataset with nm coords
+    ds_local = ds.copy().assign_coords(
+        X_nm = ds['X'] * 1e9,
+        Y_nm = ds['Y'] * 1e9
+    )
+
+    # 2) Compute global best_fit min/max
+    global_min = float(ds_local['best_fit'].min(skipna=True).values)
+    global_max = float(ds_local['best_fit'].max(skipna=True).values)
+
+    # 3) Widget definitions
+    bias_opts      = sorted(ds_local['bias_mV'].values.tolist())
+    cluster_labels = sorted(ds_local['cluster_maps'].cluster_label.values.tolist())
+
+    bias_slider   = widgets.FloatSlider(
+        description='Bias (mV)',
+        min=bias_opts[0], max=bias_opts[-1],
+        step=(bias_opts[1]-bias_opts[0]) if len(bias_opts)>1 else 0.1,
+        value=bias_opts[0],
+        readout_format='.2f'
+    )
+    cluster_left  = widgets.IntSlider(
+        description='Cluster Left',
+        min=int(cluster_labels[0]), max=int(cluster_labels[-1]),
+        step=1, value=int(cluster_labels[0])
+    )
+    cluster_right = widgets.IntSlider(
+        description='Cluster Right',
+        min=int(cluster_labels[0]), max=int(cluster_labels[-1]),
+        step=1, value=int(cluster_labels[0])
+    )
+    clim_type     = widgets.ToggleButtons(
+        description='Clim Type',
+        options=['Percent','Absolute'],
+        value='Percent'
+    )
+    clim_lower_pct = widgets.FloatSlider(
+        description='Lower (%)',
+        min=0.0, max=100.0, step=0.5, value=0.0, readout_format='.1f'
+    )
+    clim_upper_pct = widgets.FloatSlider(
+        description='Upper (%)',
+        min=0.0, max=100.0, step=0.5, value=100.0, readout_format='.1f'
+    )
+    clim_lower_val = widgets.FloatSlider(
+        description='Lower val',
+        min=global_min, max=global_max,
+        step=(global_max-global_min)/100, value=global_min,
+        readout_format='.2e'
+    )
+    clim_upper_val = widgets.FloatSlider(
+        description='Upper val',
+        min=global_min, max=global_max,
+        step=(global_max-global_min)/100, value=global_max,
+        readout_format='.2e'
+    )
+    mode_widget   = widgets.RadioButtons(
+        description='Color Mode',
+        options=['Global','Local'],
+        value='Global'
+    )
+    cmap_dropdown = widgets.Dropdown(
+        description='Colormap',
+        options=['bwr','viridis','plasma','inferno','magma','cividis'],
+        value='bwr'
+    )
+    confirm_btn   = widgets.Button(description='Confirm', button_style='primary')
+    save_btn      = widgets.Button(description='Save SVG', button_style='success')
+    output        = widgets.Output()
+
+    # show/hide percent vs absolute sliders
+    def toggle_clim(evt=None):
+        pct = (clim_type.value == 'Percent')
+        clim_lower_pct.layout.display = None if pct else 'none'
+        clim_upper_pct.layout.display = None if pct else 'none'
+        clim_lower_val.layout.display = None if not pct else 'none'
+        clim_upper_val.layout.display = None if not pct else 'none'
+    clim_type.observe(toggle_clim, names='value')
+    toggle_clim()
+
+    # 4) Helper: compute color limits
+    def compute_limits(da: xr.DataArray):
+        if clim_type.value == 'Percent':
+            lp, up = clim_lower_pct.value/100, clim_upper_pct.value/100
+            if mode_widget.value == 'Global':
+                return (global_min + (global_max-global_min)*lp,
+                        global_min + (global_max-global_min)*up)
+            else:
+                mn, mx = float(da.min()), float(da.max())
+                return (mn + (mx-mn)*lp, mn + (mx-mn)*up)
+        else:
+            return clim_lower_val.value, clim_upper_val.value
+
+    # 5) Confirm callback: render 2×2 hvplot
+    def on_confirm(_):
+        with output:
+            clear_output()
+            bias = bias_slider.value
+            cl_l = cluster_left.value
+            cl_r = cluster_right.value
+
+            # Slice DataArrays
+            ldos  = ds_local['LDOS']      .sel(bias_mV=bias, method='nearest')
+            best  = ds_local['best_fit']  .sel(bias_mV=bias, method='nearest')
+            cmap  = ds_local['cluster_maps']
+            left  = cmap.sel(cluster_label=cl_l, bias_mV=bias, method='nearest')
+            right = cmap.sel(cluster_label=cl_r, bias_mV=bias, method='nearest')
+
+            # Compute limits for each
+            v1 = compute_limits(ldos)
+            v2 = compute_limits(best)
+            v3 = compute_limits(left)
+            v4 = compute_limits(right)
+
+            opts = dict(
+                cmap       = cmap_dropdown.value,
+                colorbar   = True,
+                xlabel     = 'X (nm)',
+                ylabel     = 'Y (nm)',
+                aspect     = 'equal',
+                frame_width  = 300,
+                frame_height = 300
+            )
+            # Ticks: 5 along X and Y using nm coords
+            nx, ny = ds_local.sizes['X'], ds_local.sizes['Y']
+            ix = np.linspace(0, nx-1, 5).astype(int)
+            iy = np.linspace(0, ny-1, 5).astype(int)
+            xticks = [(float(ds_local['X'][i]), f"{(ds_local['X'][i]*1e9):.0f}") for i in ix]
+            yticks = [(float(ds_local['Y'][i]), f"{(ds_local['Y'][i]*1e9):.0f}") for i in iy]
+            opts.update(xticks=xticks, yticks=yticks)
+
+            # Titles with two‐decimal bias
+            t = f"{bias:.2f} mV"
+            p1 = ldos .hvplot.image(title=f"LDOS @ {t}", clim=v1, **opts)
+            p2 = best .hvplot.image(title=f"best_fit @ {t}\nMode={mode_widget.value}", clim=v2, **opts)
+            p3 = left .hvplot.image(title=f"Cluster {cl_l}", clim=v3, **opts)
+            p4 = right.hvplot.image(title=f"Cluster {cl_r}", clim=v4, **opts)
+
+            layout = (p1 + p2 + p3 + p4).cols(2)
+            display(layout)
+
+            # Store for saving
+            output.last = dict(
+                bias=bias, cl_l=cl_l, cl_r=cl_r,
+                limits=(v1, v2, v3, v4), cmap=cmap_dropdown.value
+            )
+
+    confirm_btn.on_click(on_confirm)
+
+    # 6) Save callback: Matplotlib 2×2 SVG
+    def on_save(_):
+        with output:
+            clear_output()
+            if not hasattr(output, 'last'):
+                print("⚠️ Please Confirm first.")
+                return
+            params = output.last
+            bias, cl_l, cl_r = params['bias'], params['cl_l'], params['cl_r']
+            (v1, v2, v3, v4) = params['limits']
+            cmap = params['cmap']
+
+            # Slice again
+            da_list = [
+                ds_local['LDOS']     .sel(bias_mV=bias, method='nearest'),
+                ds_local['best_fit'] .sel(bias_mV=bias, method='nearest'),
+                ds_local['cluster_maps'].sel(cluster_label=cl_l, bias_mV=bias, method='nearest'),
+                ds_local['cluster_maps'].sel(cluster_label=cl_r, bias_mV=bias, method='nearest')
+            ]
+            titles = [
+                f"LDOS @ {bias:.2f} mV",
+                f"best_fit @ {bias:.2f} mV\nMode={mode_widget.value}",
+                f"Cluster {cl_l}",
+                f"Cluster {cl_r}"
+            ]
+
+            # Create figure
+            fig, axes = plt.subplots(2, 2, figsize=(8, 8), constrained_layout=True)
+
+            for idx, (ax, da, title, (vmin, vmax)) in enumerate(zip(
+                axes.flatten(), da_list, titles, [v1, v2, v3, v4]
+            )):
+                X_nm = da['X_nm'].values
+                Y_nm = da['Y_nm'].values
+                extent = [X_nm.min(), X_nm.max(), Y_nm.min(), Y_nm.max()]
+                im = ax.imshow(
+                    da.values,
+                    extent=extent,
+                    origin='lower',
+                    cmap=cmap,
+                    vmin=vmin, vmax=vmax,
+                    aspect='equal'
+                )
+                ax.set_title(title)
+                ax.set_xlabel('X (nm)')
+                ax.set_ylabel('Y (nm')
+
+                # integer tick labels
+                xt = ax.get_xticks()
+                yt = ax.get_yticks()
+                ax.set_xticklabels([f"{x:.0f}" for x in xt], rotation=45, ha='right')
+                ax.set_yticklabels([f"{y:.0f}" for y in yt])
+
+                # reduced‐size colorbar (half width)
+                cbar = fig.colorbar(im, ax=ax, fraction=0.075, pad=0.02)
+                cbar.set_label('Intensity')
+
+                # 10 nm scale bar at 10% from left, 5% from bottom
+                x_span = extent[1] - extent[0]
+                y_span = extent[3] - extent[2]
+                x0 = extent[0] + 0.10 * x_span   # ← moved to 10% from left
+                y0 = extent[2] + 0.05 * y_span
+                length = 10.0
+
+                # adaptive color only for top-left (idx==0), else black
+                if idx == 0:
+                    xc = x0 + length/2
+                    i_center = np.argmin(np.abs(X_nm - xc))
+                    j_y      = np.argmin(np.abs(Y_nm - y0))
+                    sample   = da.values[j_y, i_center]
+                    bar_color = 'black' if sample > (vmin+vmax)/2 else 'white'
+                else:
+                    bar_color = 'black'
+
+                ax.hlines(y=y0, xmin=x0, xmax=x0+length, colors=bar_color, linewidth=3)
+                ax.text(
+                    x0 + length/2,
+                    y0 + 0.02*y_span,
+                    '10 nm',
+                    color=bar_color,
+                    ha='center', va='bottom',
+                    fontsize=10, weight='bold'
+                )
+
+            # save SVG
+            folder = 'output_figures'
+            os.makedirs(folder, exist_ok=True)
+            fname = os.path.join(folder, 'cluster_map2x2.svg')
+            fig.savefig(fname, format='svg')
+            plt.close(fig)
+            print(f"✅ Saved SVG to '{fname}'")
+
+    # 7) Display UI: separated widget controls and image output
+    controls = widgets.VBox([
+        bias_slider,
+        cluster_left,
+        cluster_right,
+        clim_type,
+        widgets.HBox([clim_lower_pct, clim_upper_pct]),
+        widgets.HBox([clim_lower_val, clim_upper_val]),
+        mode_widget,
+        cmap_dropdown,
+        widgets.HBox([confirm_btn, save_btn])
+    ])
+    display(controls)
+    display(output)
+
+
 # -
 
-#dashboard = cluster_map_2x2panel(ds_opt2)
-dashboard = cluster_map_2x2panel(ds_cluster)
+dashboard = cluster_map_2x2panel(ds_opt2)
+#dashboard = cluster_map_2x2panel(ds_cluster)
 
 dashboard
 
@@ -15390,7 +18421,9 @@ ds_cluster
 
 # * Use ds_cluster instead of ds_opt2
 
+ds_cluster = ds_opt2.copy()
 
+ds_opt2
 
 # +
 #ds_opt2.LDOS.sel(bias_mV=0).plot(robust = True)
@@ -15409,18 +18442,95 @@ ax = isns.imshow(ds_opt2.LDOS.sel(bias_mV=0).values,
                  #robust = True,
                 )
 plt.show()
-# SVG 포맷으로 저장
+# Save as SVG
 ax.figure.savefig(
     "ldos_map_0mV_2T003.svg",
     format="svg",
     bbox_inches="tight"
 )
 
-# Figure 객체 종료 (메모리 해제 및 중복 출력 방지)
+# Close the Figure object (free memory and avoid duplicate display)
 plt.close(ax.figure)
 # -
 
 # ### Clustered LDOS data
+
+(ds_opt2.X.max()-ds_opt2.X.min())/ds_opt2.X.size
+
+data = ds_opt2.where(ds_opt2.ZB_mask.notnull(),drop =True).LDOS.sel(bias_mV=0).values
+isns.imshow(data)
+
+
+
+# +
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn_image as isns
+from ipywidgets import interactive, FloatSlider
+
+# 1) Prepare the data
+#data = ds_opt2.where(ds_opt2.ZB_mask,drop =True).LDOS.sel(bias_mV=0).values
+data = ds_opt2.where(ds_opt2.ZB_mask.notnull(),drop =True).LDOS.sel(bias_mV=0).values
+default_vmin, default_vmax = np.nanpercentile(data, (2, 98))
+
+# 2) Define the plotting function using isns.imshow
+def plot_ldos(vmin: float, vmax: float):
+    """
+    Plot LDOS map at 0 mV with adjustable vmin/vmax, using seaborn_image.
+    Saves the figure to SVG and closes it to avoid duplicates.
+    """
+    # set global font and context
+    isns.set_context(
+        mode="notebook",
+        fontfamily="Arial",
+        rc={"font.size": 16}
+    )
+
+    # show image with given vmin/vmax
+    isns.set_scalebar(location="lower left", color="black", width_fraction=0.02)
+
+    ax = isns.imshow(
+        data,
+        dx=0.5,
+        units="nm",
+        cmap="viridis",
+        vmin=vmin,
+        vmax=vmax
+    )
+    #ax.set_title("LDOS Map (0 mV)")
+
+    # display
+    plt.show()
+
+    # save as SVG
+    ax.figure.savefig(
+        "ldos_map_0mV_2T003.svg",
+        format="svg",
+        bbox_inches="tight"
+    )
+    plt.close(ax.figure)
+
+# 3) Create sliders with scientific notation readout
+vmin_slider = FloatSlider(
+    min=np.nanmin(data),
+    max=np.nanmax(data),
+    step=(np.nanmax(data) - np.nanmin(data)) / 100,
+    value=default_vmin,
+    description='vmin',
+    readout_format='.2e'   # scientific notation
+)
+vmax_slider = FloatSlider(
+    min=np.nanmin(data),
+    max=np.nanmax(data),
+    step=(np.nanmax(data) - np.nanmin(data)) / 100,
+    value=default_vmax,
+    description='vmax',
+    readout_format='.2e'
+)
+
+# 4) Display interactive widget
+interactive(plot_ldos, vmin=vmin_slider, vmax=vmax_slider)
+
 
 # +
 #ds_opt2.cluster_umap_HDBSCAN9_L2.sel(bias_mV=0)
@@ -15430,21 +18540,21 @@ isns.set_context(
     fontfamily="Arial",
     rc={"font.size": 16}
 )
-ax = isns.imshow(ds_opt2.cluster_umap_HDBSCAN9_L2.sel(bias_mV=0).values, 
+ax = isns.imshow(ds_opt2.cluster_umap_HDBSCAN3_L0.sel(bias_mV=0).values, 
                  dx=1, 
                  units="nm",
                  cmap="viridis",
                  #robust = True,
                 )
 plt.show()
-# SVG 포맷으로 저장
+# Save as SVG
 ax.figure.savefig(
     "ldos_map_cluster2_0mV_2T003.svg",
     format="svg",
     bbox_inches="tight"
 )
 
-# Figure 객체 종료 (메모리 해제 및 중복 출력 방지)
+# Close the Figure object (free memory and avoid duplicate display)
 plt.close(ax.figure)
 
 # +
@@ -15458,34 +18568,40 @@ isns.set_context(
     rc={"font.size": 16}
 )
 ax = isns.imshow(threshold_multiotsu_xr(
-    ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN9_L2']],multiclasses=4
-).cluster_umap_HDBSCAN9_L2.values, 
+    ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN1_L1']],multiclasses=4
+).cluster_umap_HDBSCAN1_L1.values, 
                  dx=1, 
                  units="nm",
                  cmap="viridis",
                  #robust = True,
                 )
 plt.show()
-# SVG 포맷으로 저장
+# Save as SVG
 ax.figure.savefig(
-    "ldos_map_cluster2_0mV_2T003_multiotsu3.svg",
+    "ldos_map_cluster1_0mV_2T003_multiotsu3.svg",
     format="svg",
     bbox_inches="tight"
 )
 
-# Figure 객체 종료 (메모리 해제 및 중복 출력 방지)
+# Close the Figure object (free memory and avoid duplicate display)
 plt.close(ax.figure)
 
 # +
 #threshold_multiotsu_xr(ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN9_L2']],multiclasses=3).cluster_umap_HDBSCAN9_L2.plot()
 
-ds_cl2_thres = threshold_multiotsu_xr(ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN9_L2']],multiclasses=4).cluster_umap_HDBSCAN9_L2
+ds_cl1_thres = threshold_multiotsu_xr(ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN1_L1']],multiclasses=4).cluster_umap_HDBSCAN1_L1
 # -
 
-cluster_zbP_mask = (ds_cl2_thres==3)
+#cluster_zbP_mask = (ds_cl1_thres==1)|(ds_cl1_thres==2)| (ds_cl1_thres==3)
+cluster_zbP_mask = (ds_cl1_thres==2)| (ds_cl1_thres==3)
+cluster_SC_mask = (ds_cl1_thres==0)#| (ds_cl1_thres==3)
 
 
-ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN9_L2']].where(cluster_zbP_mask,drop = False).cluster_umap_HDBSCAN9_L2.plot()
+cluster_SC_mask.plot(cmap = 'viridis' )
+
+ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN1_L1']].where(cluster_zbP_mask,drop = False).cluster_umap_HDBSCAN1_L1.plot()
+
+
 
 # +
 ## cluster2 multi-otsu 3 results
@@ -15497,7 +18613,7 @@ isns.set_context(
     fontfamily="Arial",
     rc={"font.size": 16}
 )
-ax = isns.imshow(ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN9_L2']].where(cluster_zbP_mask).cluster_umap_HDBSCAN9_L2.notnull().values
+ax = isns.imshow(ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN1_L1']].where(cluster_zbP_mask).cluster_umap_HDBSCAN1_L1.notnull().values
                  , 
                  dx=1, 
                  units="nm",
@@ -15505,14 +18621,14 @@ ax = isns.imshow(ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN9_L2']].where(clus
                  #robust = True,
                 )
 plt.show()
-# SVG 포맷으로 저장
-ax.figure.savefig(
+# Save as SVG
+'''ax.figure.savefig(
     "ldos_map_cluster2_0mV_2T003_multiotsu3.svg",
     format="svg",
     bbox_inches="tight"
 )
-
-# Figure 객체 종료 (메모리 해제 및 중복 출력 방지)
+'''
+# Close the Figure object (free memory and avoid duplicate display)
 plt.close(ax.figure)
 
 # +
@@ -15525,7 +18641,7 @@ isns.set_context(
     fontfamily="Arial",
     rc={"font.size": 16}
 )
-ax = isns.imshow(ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN9_L2']].where(cluster_zbP_mask).cluster_umap_HDBSCAN9_L2.notnull().values
+ax = isns.imshow(ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN1_L1']].where(cluster_zbP_mask).cluster_umap_HDBSCAN1_L1.notnull().values
                  , 
                  dx=1, 
                  units="nm",
@@ -15533,22 +18649,27 @@ ax = isns.imshow(ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN9_L2']].where(clus
                  #robust = True,
                 )
 plt.show()
-# SVG 포맷으로 저장
+# Save as SVG
+'''
 ax.figure.savefig(
     "ldos_map_cluster2_0mV_2T003_multiotsu3-1.svg",
     format="svg",
     bbox_inches="tight"
 )
-
-# Figure 객체 종료 (메모리 해제 및 중복 출력 방지)
+'''
+# Close the Figure object (free memory and avoid duplicate display)
 plt.close(ax.figure)
 
 # +
 #threshold_otsu_xr(ds_opt2.sel(bias_mV=0)[['cluster_umap_HDBSCAN9_L2']].fillna(0) ).cluster_umap_HDBSCAN9_L2.plot()
+
+# +
+ds_3 = ds_opt2[['LDOS']].copy()
+
+ds_3
 # -
 
-ds_3 = ds_opt2[['LDOS']].copy()
-ds_3
+ds = ds_opt2.copy()
 
 filter_gaussian_xr(ds_3, overwrite=True, )
 
@@ -15564,15 +18685,6 @@ hv.extension('bokeh')     # HoloViews  Bokeh extension
 # ── 이하 최소 재현 테스트 코드 ─────────────────────────────────────────
 import numpy as np
 import xarray as xr
-
-# 더미 3D 데이터셋 생성
-bias = np.linspace(0, 100, 5)
-X    = np.linspace(0,   1, 10)
-Y    = np.linspace(0,   1, 10)
-data = np.random.rand(len(bias), len(X), len(Y))
-ds   = xr.DataArray(data,
-                    coords=[('bias_mV', bias), ('X', X), ('Y', Y)],
-                    name='LDOS').to_dataset()
 
 # 슬라이더 위젯
 bias_slider = pn.widgets.FloatSlider(
@@ -15755,6 +18867,361 @@ ds_opt2.ZB_mask.notnull().plot()
 
 ds_opt2.sel(bias_mV=0).ZB_mask.plot()
 
+
+
+# ## SELECT example LDOS curve
+
+
+
+# +
+import matplotlib.pyplot as plt
+
+# Select data and plot
+da = ds_opt2.sel(bias_mV=0).ZB_mask
+plot_result = da.plot()
+
+# Get target coordinate
+y_idx = 141
+x_idx = 107
+'''
+y_idx = 83
+x_idx = 15
+'''
+
+x_val = da.X.values[x_idx]
+y_val = da.Y.values[y_idx]
+
+# Overlay red dot
+ax = plot_result.axes
+ax.plot(x_val, y_val, 'ro', markersize=6, zorder=10)
+
+plt.show()
+
+
+# +
+target_x = 0.5758176e-07
+
+x_vals = ds.X.values
+x_idx = np.argmin(np.abs(x_vals - target_x))
+print (x_idx) #  101
+
+
+target_y = 2.1154465e-07
+y_vals = ds.Y.values
+y_idx = np.argmin(np.abs(y_vals - target_y))
+print (y_idx) # 142
+
+
+# -
+
+
+
+
+
+# +
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import xarray as xr
+from lmfit.models import LorentzianModel, GaussianModel, VoigtModel, ConstantModel
+from functools import reduce
+
+def plot_region_fitting_result_from_dsfit(
+        ds_fit,
+        model_type=None,
+        allowed_models=['Lorentzian', 'Gaussian', 'Voigt'],
+        y_idx=None, x_idx=None,
+        weight_function_show=False,
+        use_zb_mask=False,
+        zb_mask_key='ZB_mask',
+        show_shade=True,
+        show_legend=True,
+        return_fig=False):
+    """
+    Reconstructs and visualizes the fitted LDOS curve for a selected pixel in an xarray.Dataset,
+    merging all available options into a single comprehensive function.
+
+    Parameters
+    ----------
+    ds_fit : xarray.Dataset
+        Dataset of shape (Y, X, bias_mV, peak) containing:
+          - Variables:
+            • 'bias_mV' (1D axis values)
+            • 'LDOS' (2D array of raw data)
+            • 'peak_center', 'peak_amplitude', 'peak_sigma', 'redchi'
+          - Optional Variables:
+            • 'background_value' (constant offset)
+            • 'model_type' (per-pixel model choice)
+            • zb_mask_key (e.g. 'ZB_mask' for zero-bias masking)
+            • 'level_proximity' (CdGM level proximity data)
+          - Attributes:
+            • 'weight_sigma' (sigma for weight function)
+            • 'Ef' (Fermi energy)
+            • 'SCgap' (superconducting gap energy)
+    model_type : {None, str}, optional
+        If None, the per-pixel model in ds_fit['model_type'] is used;
+        otherwise forces one of allowed_models.
+    allowed_models : list of str, optional
+        List of supported fit models; default is ['Lorentzian', 'Gaussian', 'Voigt'].
+    y_idx, x_idx : int, optional
+        Pixel indices to plot. If both are None and use_zb_mask is True,
+        a random valid pixel is selected by zero-bias mask and redchi.
+    weight_function_show : bool, default False
+        If True, also plot the weight function and the convoluted fit.
+    use_zb_mask : bool, default False
+        If True and zb_mask_key exists in ds_fit, mask bias points accordingly.
+    zb_mask_key : str, default 'ZB_mask'
+        Name of the mask variable for zero-bias filtering.
+    show_shade : bool, default True
+        If True, draw CdGM level guide lines and optionally shade peaks;
+        if False, restrict x-axis to valid bias region only.
+    show_legend : bool, default True
+        If False, suppress the legend display.
+    return_fig : bool, default False
+        If True, return (fig, df); otherwise display the plot and return df only.
+
+    Returns
+    -------
+    df : pandas.DataFrame
+        DataFrame indexed by bias_mV, with columns:
+          'LDOS', 'best_fit', 'peak0', …, 'bkg' (if present),
+          'convoluted_fit', 'weight_function' (if weight_function_show=True)
+    fig : matplotlib.figure.Figure, optional
+        The created Figure object, returned only if return_fig=True.
+    """
+    # 1) Determine pixel indices
+    ny, nx = ds_fit.dims['Y'], ds_fit.dims['X']
+    if use_zb_mask and y_idx is None and x_idx is None and zb_mask_key in ds_fit:
+        raw_mask = ds_fit[zb_mask_key].values
+        valid_mask = (np.any(~np.isnan(raw_mask), axis=2)
+                      if raw_mask.ndim == 3
+                      else raw_mask.astype(bool))
+        valid_fit = ~np.isnan(ds_fit['redchi'].values)
+        ys, xs = np.where(valid_mask & valid_fit)
+        if len(ys) == 0:
+            raise RuntimeError("No valid pixel found with ZB mask and redchi")
+        sel = np.random.randint(len(ys))
+        y_idx, x_idx = int(ys[sel]), int(xs[sel])
+    if y_idx is None:
+        y_idx = np.random.randint(ny)
+    if x_idx is None:
+        x_idx = np.random.randint(nx)
+
+    print(f"Using pixel Y={y_idx}, X={x_idx} for plotting")
+
+    # 2) Extract bias axis and raw LDOS data
+    bias = ds_fit['bias_mV'].values
+    ldos = ds_fit['LDOS'].isel(Y=y_idx, X=x_idx).values
+
+    # 3) Select model type
+    if model_type is None:
+        chosen = ds_fit['model_type'].isel(Y=y_idx, X=x_idx).item().capitalize()
+    else:
+        chosen = model_type.capitalize()
+    if chosen not in allowed_models:
+        raise ValueError(f"Model '{chosen}' not supported. Choose from {allowed_models}.")
+    if chosen == 'Lorentzian':
+        mc, fit_color = LorentzianModel, 'r'
+    elif chosen == 'Gaussian':
+        mc, fit_color = GaussianModel, 'b'
+    else:
+        mc, fit_color = VoigtModel, 'g'
+
+    # 4) Construct bias validity mask if requested
+    mask = np.ones_like(bias, bool)
+    if use_zb_mask and zb_mask_key in ds_fit:
+        raw = ds_fit[zb_mask_key].isel(Y=y_idx, X=x_idx).values
+        if isinstance(raw, np.ndarray) and raw.shape == bias.shape:
+            mask = (~np.isnan(raw)
+                    if np.issubdtype(raw.dtype, np.floating)
+                    else raw.astype(bool))
+        elif np.ndim(raw) == 0:
+            mask = np.full_like(bias, bool(raw), bool)
+
+    # 5) Load fit parameters for valid peaks
+    redchi = ds_fit['redchi'].isel(Y=y_idx, X=x_idx).item()
+    n_peaks = ds_fit.dims['peak']
+    centers = ds_fit['peak_center'].isel(Y=y_idx, X=x_idx).values
+    amps    = ds_fit['peak_amplitude'].isel(Y=y_idx, X=x_idx).values
+    sigmas  = ds_fit['peak_sigma'].isel(Y=y_idx, X=x_idx).values
+    idxs = [
+        i for i in range(n_peaks)
+        if not (np.isnan(centers[i]) or np.isnan(amps[i]) or np.isnan(sigmas[i]))
+    ]
+    print("Valid peak indices:", idxs)
+
+    # 6) Build composite model including background if present
+    models = []
+    if 'background_value' in ds_fit:
+        models.append(ConstantModel(prefix='bkg_'))
+        bgv = ds_fit['background_value'].isel(Y=y_idx, X=x_idx).item()
+    for i in idxs:
+        models.append(mc(prefix=f'peak{i}_'))
+    comp = reduce(lambda a, b: a + b, models)
+    params = comp.make_params()
+    if 'background_value' in ds_fit:
+        params['bkg_c'].set(value=bgv)
+    for i in idxs:
+        params[f'peak{i}_center'].set(value=centers[i])
+        params[f'peak{i}_amplitude'].set(value=amps[i])
+        params[f'peak{i}_sigma'].set(value=sigmas[i])
+
+    # 7) Evaluate best-fit curve and components
+    best_fit  = comp.eval(params=params, x=bias)
+    comps_vals = comp.eval_components(params=params, x=bias)
+
+    # 8) Compute weight function and convolution if requested
+    if weight_function_show:
+        wsig = ds_fit.attrs.get('weight_sigma', 1.0)
+        wfunc = np.exp(-bias**2 / (2 * wsig**2))
+        conv = np.convolve(best_fit, wfunc, mode='same') / np.sum(wfunc)
+
+    # 9) Create plot
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(bias, ldos, 'k-', lw=1.5, alpha=0.8, label='LDOS', zorder=1)
+    ax.plot(bias, best_fit, fit_color+'-', lw=4, alpha=1.0,
+            label=f"{chosen} Fit (redchi={redchi:.2e})", zorder=10)
+    if weight_function_show:
+        ax.plot(bias, conv, fit_color+'-', lw=3, alpha=0.8, label='Convoluted Fit', zorder=9)
+        ax2 = ax.twinx()
+        ax2.plot(bias, wfunc, '--', lw=1.5, alpha=0.5, color='gray', label='Weight Function')
+        ax2.set_ylabel('Weight Function', color='gray')
+
+    for i in idxs:
+        ax.plot(bias, comps_vals[f'peak{i}_'], '--', lw=1.5, alpha=0.4,
+                label=f'Peak {i}', zorder=2)
+    if 'bkg_' in comps_vals:
+        ax.plot(bias, comps_vals['bkg_'], '--', lw=1.5, alpha=0.4,
+                color='gray', label='Background', zorder=2)
+
+    # 10) CdGM level lines and shading (if enabled)
+    if show_shade and 'level_proximity' in ds_fit:
+        lvl_prox = ds_fit['level_proximity'].isel(Y=y_idx, X=x_idx).values
+        Ef = ds_fit.attrs.get('Ef', 1.0)
+        SCgap = ds_fit.attrs.get('SCgap', 1.0)
+        E_mu = SCgap**2 / Ef
+        for i in idxs:
+            lp = lvl_prox[i]
+            if not np.isnan(lp) and abs(lp) < SCgap:
+                if lp == 0:
+                    lc, ls, fill = 'gray', '-', True
+                else:
+                    frac = abs((lp/E_mu) % 1)
+                    frac = 1 - frac if frac > 0.5 else frac
+                    if np.isclose(frac, 0, atol=1e-2):
+                        lc, ls, fill = 'cyan', '--', True
+                    elif np.isclose(frac, 0.5, atol=1e-2):
+                        lc, ls, fill = 'magenta', '--', True
+                    else:
+                        lc, ls, fill = 'gray', '--', False
+                ax.axvline(lp, color=lc, linestyle=ls, linewidth=1)
+                if fill:
+                    ax.fill_between(bias, comps_vals[f'peak{i}_'], color=lc, alpha=0.3)
+        cand = []
+        nmin = int(np.floor(bias.min() / E_mu))
+        nmax = int(np.ceil(bias.max() / E_mu))
+        for n in range(nmin, nmax + 1):
+            for lvl in (n*E_mu, (n + 0.5)*E_mu):
+                if abs(lvl) < SCgap:
+                    cand.append(lvl)
+        for lvl in sorted(cand):
+            frac = abs((lvl/E_mu) % 1)
+            frac = 1 - frac if frac > 0.5 else frac
+            if np.isclose(frac, 0, atol=1e-2):
+                col, lab = 'cyan', 'Integer CdGM Level'
+            elif np.isclose(frac, 0.5, atol=1e-2):
+                col, lab = 'magenta', 'Half-Integer CdGM Level'
+            else:
+                col, lab = 'gray', None
+            ax.axvline(lvl, color=col, ls='--', lw=1, label=lab)
+    else:
+        valid_bias = bias[mask]
+        if valid_bias.size > 0:
+            ax.set_xlim(valid_bias.min(), valid_bias.max())
+
+    ax.axvline(0, color='gray', ls='-', lw=1)
+    ax.set_xlabel('Bias (mV)')
+    ax.set_ylabel('LDOS')
+
+    y_phys = ds_fit['Y'].isel(Y=y_idx).item() * 1e9
+    x_phys = ds_fit['X'].isel(X=x_idx).item() * 1e9
+    ax.set_title(
+        f'Y_idx={y_idx}, X_idx={x_idx}, model={chosen}\n'
+        f'Y={y_phys:.2f} nm, X={x_phys:.2f} nm',
+        fontsize=10
+    )
+
+    if show_legend:
+        if weight_function_show:
+            h1, l1 = ax.get_legend_handles_labels()
+            h2, l2 = ax2.get_legend_handles_labels()
+            ax.legend(h1 + h2, l1 + l2, loc='upper left')
+        else:
+            h, l = ax.get_legend_handles_labels()
+            unique = dict(zip(l, h))
+            ax.legend(unique.values(), unique.keys(), loc='best')
+
+    plt.tight_layout()
+
+    # 11) Collect all curves into a DataFrame
+    data = {'LDOS': ldos, 'best_fit': best_fit}
+    for name, arr in comps_vals.items():
+        data[name.rstrip('_')] = arr
+    if weight_function_show:
+        data['convoluted_fit'] = conv
+        data['weight_function'] = wfunc
+    df = pd.DataFrame(data, index=bias)
+    df.index.name = 'bias_mV'
+
+    if return_fig:
+        return fig, df
+    else:
+        plt.show()
+        return df
+
+
+
+# +
+
+fig,_ = plot_region_fitting_result_from_dsfit(ds_opt2,
+                                              use_zb_mask=True,
+                                              zb_mask_key='ZB_mask',
+                                              allowed_models=['Lorentzian', 'Gaussian', 'Voigt'],
+                                              
+                                              show_shade=False,
+                                              x_idx=106,
+                                              y_idx=139,
+                                              return_fig=True)
+#fig
+
+# +
+
+fig,_ = plot_region_fitting_result_from_dsfit(ds_opt2,
+                                              use_zb_mask=True,
+                                              zb_mask_key='ZB_mask',
+                                              allowed_models=['Lorentzian', 'Gaussian', 'Voigt'],
+                                              
+                                              show_shade=False,
+                                              x_idx=107,
+                                              y_idx=140,
+                                              return_fig=True)
+#fig
+
+# +
+
+fig,_ = plot_region_fitting_result_from_dsfit(ds_opt2,
+                                              use_zb_mask=True,
+                                              zb_mask_key='ZB_mask',
+                                              allowed_models=['Lorentzian', 'Gaussian', 'Voigt'],
+                                              
+                                              show_shade=False,
+                                              x_idx=107,
+                                              y_idx=141,
+                                              return_fig=True)
+#fig
+
+# +
+
 fig,dfY69X148 = plot_region_fitting_result_from_dsfit(ds_opt2,
                                               use_zb_mask=True,
                                               zb_mask_key='ZB_mask',
@@ -15762,8 +19229,144 @@ fig,dfY69X148 = plot_region_fitting_result_from_dsfit(ds_opt2,
                                               show_shade=False,
                                               y_idx=69,
                                               x_idx=148,
+                                                      show_legend= False,
                                               return_fig=True)
 #fig
+
+# +
+
+fig,dfY141X107 = plot_region_fitting_result_from_dsfit(ds_opt2,
+                                              use_zb_mask=True,
+                                              zb_mask_key='ZB_mask',
+                                              allowed_models=['Lorentzian', 'Gaussian', 'Voigt'],
+                                              show_shade=False,
+                                              y_idx=141,
+                                              x_idx=107,
+                                                      show_legend= False,
+                                              return_fig=True)
+#fig
+# -
+
+dfY141X107
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+df = dfY141X107.copy()
+
+
+
+df = dfY141X107.copy()
+
+# +
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# 1) Remove all grid lines
+sns.set_style("white")
+
+# 2) Create figure and axes
+fig, ax = plt.subplots(figsize=(6, 5))
+
+# 3) Plot LDOS and best_fit as thick solid lines; make best_fit semi-transparent
+palette = sns.color_palette("tab10")
+ax.plot(
+    df.index, df["LDOS"],
+    linestyle="-", linewidth=6,
+    color=palette[0],
+    label="LDOS"
+)
+ax.plot(
+    df.index, df["best_fit"],
+    linestyle="-", linewidth=6,
+    color=palette[1],
+    alpha=0.75,               # semi-transparent
+    label="best_fit"
+)
+
+# 4) Plot peak0–peak4 as dashed lines and annotate peak index just below the peak
+peaks = ["peak0", "peak1", "peak2", "peak3", "peak4"]
+peak_colors = palette[2:7]
+y_range = df["LDOS"].max() - df["LDOS"].min()
+offset = y_range * 0.08     # shift annotation downward by 8% of y-range
+
+for i, (peak, color) in enumerate(zip(peaks, peak_colors)):
+    ax.plot(
+        df.index, df[peak],
+        linestyle="--", linewidth=1.5,
+        color=color
+    )
+    x_max = df[peak].idxmax()
+    y_max = df[peak].max()
+    ax.text(
+        x_max, y_max - offset,  # place text just below the peak
+        str(i),
+        ha="center", va="top",
+        fontsize=20,
+        color=color
+    )
+
+# 5) Set axis labels only
+ax.set_xlabel("Bias (mV)")
+ax.set_ylabel("LDOS")
+
+# 6) Show legend for LDOS and best_fit only
+ax.legend(loc="best")
+
+# 7) Final layout adjustment
+plt.tight_layout()
+
+# 8) Save the figure in both PNG and SVG formats
+fig.savefig("region_fit.png", dpi=300, bbox_inches="tight")
+fig.savefig("region_fit.svg", bbox_inches="tight")
+
+# 9) Display the plot (optional if running interactively)
+plt.show()
+
+# -
+
+# ## df _ sub grid drawing
+
+df
+
+# +
+
+# Plotting with shared axes, no labels/ticks, and hatching for empty cells
+fig, axes = plt.subplots(3, 3, figsize=(5, 5), sharex=True, sharey=True)
+axes = axes.flatten()
+peaks = ['peak0', 'peak1', 'peak2', 'peak3', 'peak4']
+
+for i, peak in enumerate(peaks):
+    ax = axes[i]
+    ax.plot(df.index, df[peak], linewidth=1.5)
+    # Remove labels and ticks
+    ax.set_xticks([])
+    ax.set_yticks([])
+    # Add peak number at top-left
+    ax.text(0.02, 0.98, str(i), transform=ax.transAxes,
+            va='top', ha='left', fontsize=20)
+    # Draw thin border
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.0)
+# Hatching on empty cells with 'x' pattern, facecolor/edgecolor 지정
+for j in range(len(peaks), 9):
+    ax = axes[j]
+    ax.set_xticks([]); ax.set_yticks([])
+
+    # 패치 배경은 흰색, 해칭 선은 검은색
+    ax.patch.set_facecolor('white')
+    ax.patch.set_edgecolor('black')
+    ax.patch.set_hatch('x')
+
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.0)
+
+plt.tight_layout()
+plt.show()
+# -
+
+
+
+
 
 # +
 #  dfY69X148
@@ -15806,20 +19409,18 @@ for i in range(6):
 # 6) Set axis labels and title
 plt.xlabel('Bias (mV)')
 plt.ylabel('LDOS (A/V)')
-plt.title('LDOS @ (204 nm, 124 nm)')
+#plt.title('LDOS @ (204 nm, 124 nm)')
 
 # 7) Adjust layout to minimize whitespace
 plt.tight_layout()
 
 # 8) Save the figure as SVG with tight bounding box
 plt.savefig('ldos_dfY69X148_plot.svg', format='svg', bbox_inches='tight')
+plt.savefig('ldos_dfY69X148_plot.png', dpi = 300)
 
 # 9) Display the plot
 plt.show()
 
-# -
-
-ds_opt2[['LDOS
 
 # +
 
@@ -15885,57 +19486,6 @@ fig.show()
 
 # -
 
-import importlib
-spec = importlib.util.find_spec("kaleido")
-if spec is not None:
-    print("kaleido is installed")
-else:
-    print("kaleido is not installed")
-
-
-
-# +
-# Mayavi를 이용한 3D slice 스태킹 예제 코드
-import numpy as np
-from mayavi import mlab
-
-# 1) xarray 데이터에서 NumPy 배열 및 좌표 추출
-data = ds_opt2.LDOS.values            # shape: (Y, X, bias_mV)
-ys   = ds_opt2.Y.values
-xs   = ds_opt2.X.values
-zs   = ds_opt2.bias_mV.values
-
-# 2) 10개의 bias 슬라이스 인덱스 (0 포함, 등간격)
-slice_idxs = np.linspace(0, len(zs)-1, 10, dtype=int)
-
-# 3) Mayavi Figure 생성
-mlab.figure(bgcolor=(1,1,1), size=(800, 600))
-
-# 4) 각 슬라이스를 XY 평면에 스태킹
-for idx in slice_idxs:
-    z0    = zs[idx]
-    slice_img = data[:, :, idx]       # Y×X
-    Xg, Yg = np.meshgrid(xs, ys)      # 그리드 생성
-    # surf: (x, y, z) 평면 위에 scalars 로 컬러맵 적용
-    mlab.surf(
-        Xg, Yg,
-        np.full_like(Xg, z0),         # bias 위치를 높이(z)에 사용
-        scalars=slice_img,
-        colormap='viridis',
-        opacity=0.7
-    )
-
-# 5) 축 및 컬러바 옵션
-mlab.axes(
-    xlabel='X (m)', ylabel='Y (m)', zlabel='bias (mV)',
-    ranges=[xs.min(), xs.max(), ys.min(), ys.max(), zs.min(), zs.max()]
-)
-mlab.colorbar(title='LDOS', orientation='vertical')
-mlab.view(azimuth=45, elevation=60)  # 시점 설정
-mlab.show()
-
-# -
-
 # ## export graph & data fro Dr. shin
 
 grid_LDOS_SnD_pks=ds_opt2.copy()
@@ -15945,6 +19495,7 @@ import matplotlib.pyplot as plt
 
 # 1) 좌표 리스트
 # for 2T 003
+'''
 select_coords = [
     (24, 50),
     (29, 152),
@@ -15955,6 +19506,17 @@ select_coords = [
     (131, 118),
     (145, 99)
 ]
+
+'''
+select_coords = [
+    (143, 103),
+    (144, 104),
+    (145, 105),
+    (146, 106),
+]
+
+
+
 # 2) Y값 기준으로 위→아래 정렬 및 번호 매기기
 sorted_coords = sorted(select_coords, key=lambda yx: yx[0])
 numbers = list(range(1, len(sorted_coords) + 1))
@@ -16001,6 +19563,7 @@ import matplotlib.pyplot as plt
 
 # 1) 저장할 좌표 리스트
 # for 2T 003
+'''
 select_coords = [
     (24, 50),
     (29, 152),
@@ -16010,6 +19573,13 @@ select_coords = [
     (125, 32),
     (131, 118),
     (145, 99)
+]
+'''
+select_coords = [
+    #(143, 103),
+    #(144, 104),
+    (145, 105),
+    (146, 106),
 ]
 
 
@@ -16200,7 +19770,8 @@ def plot_fitting_result_facet_grid(
 # -
 
 plot_fitting_result_facet_grid(ds_opt2,#.sel( X = slice(0.5E-7,0.7E-7), Y = slice(2.0E-7,2.2E-7)), 
-                              model_type=['Lorentzian', 'Gaussian', 'Voigt'], 
+                              #model_type=['Lorentzian', 'Gaussian', 'Voigt'], 
+                               model_type='Lorentzian', 
                                    point_list=60, 
                                    ncol=6, 
                                    weight_function_show=False,
@@ -16221,95 +19792,523 @@ plot_fitting_result_facet_grid(ds_opt2,#.sel( X = slice(0.5E-7,0.7E-7), Y = slic
 
 ds_cluster
 
+
+
+ds_opt2
+
+
+
+# # FIGURE 3 2025 0729 VERSION 
+
+
+
+
+
+## AFTER LOADING THE DS DATA FROM 
+ds = xr.open_dataset('grid_2T_003_fit_HDBSCAN1_cluster6_20250720.nc')
+
+
+# # Figure 3 20250706 version 
+
+
+
+# ### Voxel plot 3D cluter mapping 
+
+# +
+
+import xarray as xr
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import matplotlib.pyplot as mpl
+import plotly.express as px
+
+# 1) Load dataset
+ds = ds_opt2
+
+# 2) Convert to DataFrames
+df_center  = ds['peak_center'].to_dataframe(name='peak_center').reset_index()
+df_amp     = ds['peak_amplitude'].to_dataframe(name='peak_amplitude').reset_index()
+df_cluster = ds['cluster_umap_HDBSCAN0'].to_dataframe(name='cluster').reset_index()
+
+# 3) Merge & exclude noise
+df = df_center.merge(df_amp, on=['Y','X','peak']) \
+              .merge(df_cluster, on=['Y','X','peak'])
+df = df[df['cluster'] != -1]
+
+# 4) Rename for plotting
+df = df.rename(columns={'X':'x', 'Y':'y', 'peak_center':'z'})
+
+# 5) Map peak_amplitude → marker size [4, 32]
+amp   = df['peak_amplitude'].values
+amin, amax = np.nanmin(amp), np.nanmax(amp)
+df['size'] = 8 + (amp - amin) / (amax - amin) * (32 - 8)
+
+# 6) Compute per-point opacity with floor = 0.6 → [0.6, 1.0]
+ratio = (df['peak_amplitude'] / amax).clip(0,1)
+df['opacity'] = 0.8 + 0.3 * ratio
+
+# 7) Prepare matplotlib tab10 colors
+cmap = mpl.get_cmap('tab10')
+cluster_vals = sorted(df['cluster'].unique())
+# Map cluster → RGBA tuple in 0-255 for RGB, alpha ignored here
+cluster_rgba = {
+    cl: tuple(int(255*c) for c in cmap(i)[:3])
+    for i, cl in enumerate(cluster_vals)
+}
+
+# 8) Build 3D scatter traces
+fig = go.Figure()
+for cl in cluster_vals:
+    sub = df[df['cluster'] == cl]
+    r, g, b = cluster_rgba[cl]
+    # Build per-point RGBA strings using the computed opacity
+    rgba_colors = [
+        f'rgba({r},{g},{b},{alpha:.3f})'
+        for alpha in sub['opacity']
+    ]
+    fig.add_trace(go.Scatter3d(
+        x=sub['x'], y=sub['y'], z=sub['z'],
+        mode='markers',
+        marker=dict(size=sub['size'], color=rgba_colors),
+        name=f'Cluster {cl}',
+        visible=True
+    ))
+
+# 9) Layout configuration
+
+fig.update_layout(
+    paper_bgcolor='white',           # 전체 배경을 흰색으로
+    scene=dict(
+        bgcolor='white',             # 3D 캔버스 배경도 흰색으로
+        xaxis=dict(title='X (m)', titlefont=dict(size=20), tickfont=dict(size=16)),
+        yaxis=dict(title='Y (m)', titlefont=dict(size=20), tickfont=dict(size=16)),
+        zaxis=dict(title='Bias (mV)', titlefont=dict(size=20), tickfont=dict(size=16))
+    ),
+    legend=dict(
+        title='cluster_umap_HDBSCAN0',
+        font=dict(size=16),
+        itemclick='toggle',
+        itemdoubleclick='toggleothers'
+    ),
+    title=dict(
+        text='Interactive 3D Scatter<br>'
+             'Color ∝ cluster (matplotlib.tab10), Size ∝ peak_amplitude (8–32),<br>'
+             'Opacity ∝ peak_amplitude (min 0.8',
+        font=dict(size=16)
+    ),
+    width=1200,
+    height=900
+)
+
+# -
+
+ds_opt2
+
+df
+
+
+
+
+
+# ## Figuer3  cluster plot  used 
+
+
+
+# +
+import xarray as xr
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import matplotlib.pyplot as mpl
+import plotly.express as px
+
+# 1) Load dataset
+ds = ds_opt2
+
+# 2) Convert to DataFrames
+df_center  = ds['peak_center'].to_dataframe(name='peak_center').reset_index()
+df_amp     = ds['peak_amplitude'].to_dataframe(name='peak_amplitude').reset_index()
+df_cluster = ds['cluster_umap_HDBSCAN0'].to_dataframe(name='cluster').reset_index()
+
+# 3) Merge & exclude noise
+df = df_center.merge(df_amp, on=['Y','X','peak']) \
+              .merge(df_cluster, on=['Y','X','peak'])
+df = df[df['cluster'] != -1]
+
+# 4) Rename for plotting
+df = df.rename(columns={'X':'x', 'Y':'y', 'peak_center':'z'})
+
+# 5) Map peak_amplitude → marker size [8, 32]
+amp   = df['peak_amplitude'].values
+amin, amax = np.nanmin(amp), np.nanmax(amp)
+df['size'] = 8 + (amp - amin) / (amax - amin) * (32 - 8)
+
+# 6) Compute per-point opacity with floor = 0.8 → [0.8, 1.1] then clip
+ratio = (df['peak_amplitude'] / amax).clip(0, 1)
+df['opacity'] = (0.8 + 0.3 * ratio).clip(0, 1)
+
+# 7) Prepare matplotlib tab10 colors
+cmap = mpl.get_cmap('tab10')
+cluster_vals = sorted(df['cluster'].unique())
+cluster_rgba = {
+    cl: tuple(int(255*c) for c in cmap(i)[:3])
+    for i, cl in enumerate(cluster_vals)
+}
+
+# 8) Build cluster scatter traces (legend order preserved)
+scatter_traces = []
+for cl in cluster_vals:
+    sub = df[df['cluster'] == cl]
+    r, g, b = cluster_rgba[cl]
+    rgba_colors = [
+        f'rgba({r},{g},{b},{alpha:.3f})'
+        for alpha in sub['opacity']
+    ]
+    trace = go.Scatter3d(
+        x=sub['x'], y=sub['y'], z=sub['z'],
+        mode='markers',
+        marker=dict(size=sub['size'], color=rgba_colors),
+        name=f'Cluster {cl}',
+        visible=True
+    )
+    scatter_traces.append(trace)
+
+# 9-A) Define cube edges
+x_min, x_max = df['x'].min(), df['x'].max()
+y_min, y_max = df['y'].min(), df['y'].max()
+z_min, z_max = df['z'].min(), df['z'].max()
+
+corners = [
+    [x_min, y_min, z_min], [x_max, y_min, z_min],
+    [x_max, y_max, z_min], [x_min, y_max, z_min],
+    [x_min, y_min, z_max], [x_max, y_min, z_max],
+    [x_max, y_max, z_max], [x_min, y_max, z_max],
+]
+
+edges = [
+    [0, 1], [1, 2], [2, 3], [3, 0],
+    [4, 5], [5, 6], [6, 7], [7, 4],
+    [0, 4], [1, 5], [2, 6], [3, 7],
+]
+
+# 9-B) Create Z=0 plane (will move to back)
+
+'''
+plane_trace = go.Mesh3d(
+    x=[x_min, x_max, x_max, x_min],
+    y=[y_min, y_min, y_max, y_max],
+    z=[0, 0, 0, 0],
+    color='cyan',
+    opacity=0.1,
+    showscale=False,
+    name='Z = 0 plane'
+)
+# use plane 
+'''
+
+# use plane perimeter
+plane_trace = go.Scatter3d(
+    x=[x_min, x_max, x_max, x_min, x_min],
+    y=[y_min, y_min, y_max, y_max, y_min],
+    z=[0, 0, 0, 0, 0],
+    mode='lines',
+    line=dict(color='black', width=1),
+    name='Z = 0 plane'
+)
+
+
+# Initialize figure
+fig = go.Figure()
+
+# Add Z=0 plane first (to move to back)
+fig.add_trace(plane_trace)
+
+# Add cluster scatter traces in reverse so Cluster 0 is drawn last (on top)
+for trace in reversed(scatter_traces):
+    fig.add_trace(trace)
+
+# Add wireframe box
+for i, j in edges:
+    fig.add_trace(go.Scatter3d(
+        x=[corners[i][0], corners[j][0]],
+        y=[corners[i][1], corners[j][1]],
+        z=[corners[i][2], corners[j][2]],
+        mode='lines',
+        line=dict(color='black', width=1),
+        showlegend=False
+    ))
+
+# Reorder traces so that plane_trace comes last in drawing order
+# (i.e., visually in the back)
+wireframe_traces = fig.data[-len(edges):]
+scatter_traces   = fig.data[1:-len(edges)]
+plane_trace      = fig.data[0]
+
+fig.data = wireframe_traces + scatter_traces + (plane_trace,)
+
+# 10) Layout configuration (✅ titlefont → title=dict(text=..., font=...))
+fig.update_layout(
+    paper_bgcolor='white',
+    scene=dict(
+        bgcolor='white',
+        xaxis=dict(
+            title=dict(text='X (m)', font=dict(size=20)),
+            tickfont=dict(size=16)
+        ),
+        yaxis=dict(
+            title=dict(text='Y (m)', font=dict(size=20)),
+            tickfont=dict(size=16)
+        ),
+        zaxis=dict(
+            title=dict(text='Bias (mV)', font=dict(size=20)),
+            tickfont=dict(size=16)
+        )
+    ),
+    legend=dict(
+        title=dict(text='cluster_umap_HDBSCAN1'),
+        font=dict(size=16),
+        itemclick='toggle',
+        itemdoubleclick='toggleothers'
+    ),
+    title=dict(
+        text='Interactive 3D Scatter<br>'
+             'Color ∝ cluster (matplotlib.tab10), Size ∝ peak_amplitude (8–32),<br>'
+             'Opacity ∝ peak_amplitude (min 0.8)',
+        font=dict(size=16)
+    ),
+    width=1200,
+    height=900
+)
+
+fig.show(renderer='notebook_connected')
+
+
+# +
+#ds_cluster = ds_opt2.copy()
+# -
+
+ds_cluster= ds_opt2.copy()
+
+
 ds_cluster.LDOS.sel(bias_mV=0).plot()
 
+
+
+# # Area Crop  fitting results visualization 
+
+
+
+# +
 ds_cluster.LDOS.sel(bias_mV=0).sel(X= slice(0.55E-7,0.6E-7), Y= slice (2.08E-7,2.13E-7)).plot()
+# mide left vortex
 # 10x 10 pixel 
 
 
+#ds_cluster.LDOS.sel(bias_mV=0).sel(X= slice(0.99E-7,1.045E-7), Y= slice (2.39E-7,2.445E-7)).plot()
+# centeral upper vortex
+# -
 
-ds_crop0= ds_cluster.sel(X= slice(0.55E-7,0.6E-7), Y= slice (2.08E-7,2.13E-7))
+ds_cluster
+
+# +
+
+# Define crop region in meters
+'''
+x0, x1 = 0.99e-7, 1.045e-7
+y0, y1 = 2.39e-7, 2.445e-7
+'''
+
+x0, x1 = 00.55E-7,0.6E-7
+y0, y1 = 2.08E-7,2.13E-7
+
+
 
 # +
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
+import matplotlib.patches as patches
+import numpy as np
+import seaborn_image as isns
 
-# 1) 크롭 영역 경계 (m 단위)
-x0, x1 = 0.55e-7, 0.6e-7
-y0, y1 = 2.08e-7, 2.13e-7
 
-# 2) 데이터 준비
-full = ds_cluster.LDOS.sel(bias_mV=0)
-crop = full.sel(X=slice(x0, x1), Y=slice(y0, y1))
 
-# 3) 좌표 배열
-X = full['X'].values
-Y = full['Y'].values
+# Extract LDOS data at 0 mV
+ldos_full = ds_cluster.LDOS.sel(bias_mV=0)
+ldos_crop = ldos_full.sel(X=slice(x0, x1), Y=slice(y0, y1))
 
-# 4) Figure / Axes
-fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12, 6), constrained_layout=True)
+# Compute pixel size (dx) in meters
+dx_values = np.diff(ldos_full.X.values)
+if not np.allclose(dx_values, dx_values[0]):
+    print("Warning: X spacing is not uniform. Using average dx.")
+dx = float(np.mean(dx_values))
 
-# 5) 전체 영역 imshow (raster)
-im0 = ax0.imshow(
-    full.values,
-    extent=(X.min(), X.max(), Y.min(), Y.max()),
-    origin='lower',
-    cmap='viridis',
-    aspect='equal',
-    interpolation='nearest',
-    zorder=0
+# Configure seaborn-image default settings
+isns.set_image(cmap="viridis", despine=False, origin="lower")
+
+# Create figure
+fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+
+# Full LDOS map
+isns.imshow(ldos_full, ax=axes[0], dx=dx, units="m")
+#axes[0].set_title("Full LDOS @ 0 mV", fontsize=10)
+axes[0].set_aspect("equal")
+axes[0].set_xlabel("")
+axes[0].set_ylabel("")
+
+# Convert physical coordinates to pixel indices for rectangle
+x_vals = ldos_full.X.values
+y_vals = ldos_full.Y.values
+ix0 = np.argmin(np.abs(x_vals - x0))
+ix1 = np.argmin(np.abs(x_vals - x1))
+iy0 = np.argmin(np.abs(y_vals - y0))
+iy1 = np.argmin(np.abs(y_vals - y1))
+
+ix_left = min(ix0, ix1)
+iy_bottom = min(iy0, iy1)
+width = abs(ix1 - ix0)
+height = abs(iy1 - iy0)
+
+# Draw red rectangle (in pixel index coordinates)
+rect = patches.Rectangle(
+    (ix_left, iy_bottom), width, height,
+    linewidth=2, edgecolor='red', facecolor='none',
+    zorder=10
 )
-# 축 고정
-ax0.set_xlim(X.min(), X.max())
-ax0.set_ylim(Y.min(), Y.max())
+axes[0].add_patch(rect)
 
-# 6) 붉은 크롭 박스 (zorder=1)
-rect = Rectangle(
-    (x0, y0), x1 - x0, y1 - y0,
-    fill=False, edgecolor='red', linewidth=2, zorder=1
-)
-ax0.add_patch(rect)
+# Cropped LDOS map
+isns.imshow(ldos_crop, ax=axes[1], dx=dx, units="m")
+#axes[1].set_title("Cropped LDOS Region", fontsize=10)
+axes[1].set_aspect("equal")
+axes[1].set_xlabel("")
+axes[1].set_ylabel("")
 
-ax0.set_title('Full LDOS at bias=0 mV')
-ax0.set_xlabel('X [nm]')
-ax0.set_ylabel('Y [nm]')
-
-# 7) 크롭 영역 imshow
-im1 = ax1.imshow(
-    crop.values,
-    extent=(x0, x1, y0, y1),
-    origin='lower',
-    cmap='viridis',
-    aspect='equal',
-    interpolation='nearest'
-)
-ax1.set_title('Cropped Region')
-ax1.set_xlabel('X [nm]')
-ax1.set_ylabel('Y [nm]')
-
-# 8) 컬러바 (공유)
-cbar = fig.colorbar(im1, ax=(ax0, ax1),
-                    orientation='vertical', fraction=0.046, pad=0.04)
-cbar.set_label('LDOS')
-
-# 9) SVG 저장
-fig.savefig('ldos_full_and_cropped_final.svg', format='svg')
+# Save figure as SVG and PNG
+fig.savefig("Fig2_LDOS_with_crop.svg", format="svg", bbox_inches="tight", dpi=300)
+fig.savefig("Fig2_LDOS_with_crop.png", format="png", bbox_inches="tight", dpi=300)
 
 plt.show()
 
 # -
 
+ds_cluster.ZB_mask.notnull().plot(cmap = 'Oranges')
+
+# +
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import numpy as np
+import seaborn_image as isns
+
+# Define crop region in meters
+#x0, x1 = 0.99e-7, 1.045e-7
+#y0, y1 = 2.39e-7, 2.445e-7
+
+# Extract LDOS data at 0 mV
+ldos_full = ds_cluster.LDOS.sel(bias_mV=0)
+ldos_crop = ldos_full.sel(X=slice(x0, x1), Y=slice(y0, y1))
+
+# Compute pixel size (dx) in meters
+dx_values = np.diff(ldos_full.X.values)
+if not np.allclose(dx_values, dx_values[0]):
+    print("Warning: X spacing is not uniform. Using average dx.")
+dx = float(np.mean(dx_values))
+
+# Configure seaborn-image defaults
+isns.set_image(cmap="viridis", despine=False, origin="lower")
+
+# ----------------------------------------------------------------------
+# Figure 1: Full LDOS with red crop rectangle and optional ZB_mask overlay
+# ----------------------------------------------------------------------
+fig1, ax1 = plt.subplots(figsize=(5, 5), constrained_layout=True)
+
+# Plot full LDOS map
+isns.imshow(ldos_full, ax=ax1, dx=dx, units="m")
+ax1.set_aspect("equal")
+ax1.set_xlabel("")
+ax1.set_ylabel("")
+
+# Add red rectangle in pixel coordinates
+x_vals = ldos_full.X.values
+y_vals = ldos_full.Y.values
+ix0 = np.argmin(np.abs(x_vals - x0))
+ix1 = np.argmin(np.abs(x_vals - x1))
+iy0 = np.argmin(np.abs(y_vals - y0))
+iy1 = np.argmin(np.abs(y_vals - y1))
+
+ix_left = min(ix0, ix1)
+iy_bottom = min(iy0, iy1)
+width = abs(ix1 - ix0)
+height = abs(iy1 - iy0)
+
+rect = patches.Rectangle(
+    (ix_left, iy_bottom), width, height,
+    linewidth=2, edgecolor='red', facecolor='none',
+    zorder=10
+)
+ax1.add_patch(rect)
+
+'''
+# Optional: overlay ZB_mask if present
+if "ZB_mask" in ds_cluster:
+    zb_mask_data = ds_cluster.ZB_mask.notnull()
+
+    
+    zb_overlay = np.where(np.isnan(zb_mask_data), 0, zb_mask_data).astype(float)
+    ax1.imshow(
+        zb_overlay,
+        cmap="Oranges",
+        alpha=0.1,
+        interpolation="none",
+        origin="lower",
+        extent=[-0.5, zb_overlay.shape[1] - 0.5, -0.5, zb_overlay.shape[0] - 0.5],
+        zorder=5
+    )
+'''
+
+# Save figure 1
+fig1.savefig("Fig2a_LDOS_full_with_ZBmask.svg", format="svg", bbox_inches="tight", dpi=300)
+fig1.savefig("Fig2a_LDOS_full_with_ZBmask.png", format="png", bbox_inches="tight", dpi=300)
+
+plt.show()
+
+# ----------------------------------------------------------------------
+# Figure 2: Cropped LDOS only
+# ----------------------------------------------------------------------
+fig2, ax2 = plt.subplots(figsize=(5, 5), constrained_layout=True)
+
+#isns.imshow(ldos_crop, ax=ax2, dx=dx, units="m")
+# remove scalebar 
+isns.imshow(ldos_crop, ax=ax2,)# dx=dx, units="m")
+ax2.set_aspect("equal")
+ax2.set_xlabel("")
+ax2.set_ylabel("")
+
+# Save figure 2
+fig2.savefig("Fig2b_LDOS_crop.svg", format="svg", bbox_inches="tight", dpi=300)
+fig2.savefig("Fig2b_LDOS_crop.png", format="png", bbox_inches="tight", dpi=300)
+
+plt.show()
+
+
+# +
+
+'''
+# Define crop region in meters
+x0, x1 = 0.99e-7, 1.045e-7
+y0, y1 = 2.39e-7, 2.445e-7
+'''
+ds_crop0= ds_cluster.sel(X=slice(x0, x1), Y=slice(y0, y1)).copy()
+
 ds_crop0
+# -
 
-
-
-# ## 각 pixel별 peak들의 정보를  c,a,w 의 형태로 다시 mapping 
+# ## Remap each pixel's peak information into c, a, w format 
 
 # +
 import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import TwoSlopeNorm, LinearSegmentedColormap
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import FuncFormatter
 
@@ -16320,188 +20319,141 @@ def plot_peak_subcell(
     figsize: tuple = (8, 8)
 ):
     """
-    ds의 peak 데이터를 subcell로 분할해 시각화합니다.
-    mode='center'일 때는 0으로부터의 절대값 거리를 색상으로 표현하며,
-    이 경우 컬러바 레이블에 절대값임을 표시합니다.
-    subcell 전체 영역에는 굵은 테두리를 추가합니다.
-
-    Returns
-    -------
-    (fig, ax), (demo_fig, demo_ax)
+    Visualize per-peak data in each pixel as subcells.
+    - mode='center': color by signed peak_center, with zero at colormap midpoint.
+    - mode='width': color by peak_sigma values; label and title use 'peak_width'.
+    - mode='amplitude': color by peak_amplitude.
+    Major pixel boundaries drawn thicker to distinguish pixels.
     """
-    # 1) 변수 선택
-    mode_map = {
-        'center':    'peak_center',
-        'width':     'peak_sigma',
-        'amplitude': 'peak_amplitude'
-    }
+    # 1) choose variable
+    mode_map = {'center':'peak_center', 'width':'peak_sigma', 'amplitude':'peak_amplitude'}
     if mode not in mode_map:
-        raise ValueError(f"mode는 {list(mode_map)} 중 하나여야 합니다.")
+        raise ValueError(f"mode must be one of {list(mode_map)}")
     varname = mode_map[mode]
-    raw = ds[varname].values          # (ny, nx, n_peaks)
+    raw = ds[varname].values  # (ny, nx, n_peaks)
 
-    # 2) colormap 준비 (기존 로직)
-    if cmap_name == 'berlin':
-        if cmap_name in plt.colormaps():
-            cmap = plt.get_cmap(cmap_name)
-        else:
-            try:
-                from matplotlib_colormaps import cm as extra_cm
-                plt.register_cmap(name='berlin', cmap=extra_cm.berlin)
-                cmap = plt.get_cmap('berlin')
-            except ImportError:
-                cmap = plt.get_cmap('viridis')
-    elif cmap_name == 'white_blue_purple_red_white':
-        colors = [
-            (1,1,1), (0,0,1),
-            (0.4,0,0.6), (1,0,0),
-            (1,1,1)
-        ]
+    # 2) define display label
+    if mode == 'center':
+        var_label = f"{varname}"
+    elif mode == 'width':
+        var_label = 'peak_width'
+    else:
+        var_label = varname
+
+    # 3) build colormap
+    if cmap_name == 'white_blue_purple_red_white':
+        colors = [(1,1,1),(0,0,1),(0.4,0,0.6),(1,0,0),(1,1,1)]
         cmap = LinearSegmentedColormap.from_list(cmap_name, colors)
     else:
         cmap = plt.get_cmap(cmap_name)
 
-    # 3) subcell grid 크기 계산
+    # 4) compute subcell layout
     ny, nx, _ = raw.shape
     counts = np.sum(~np.isnan(raw), axis=2)
     m = int(np.nanmax(counts))
     s = int(np.ceil(np.sqrt(m)))
-    row_sub = col_sub = s
     total_slots = s * s
 
-    # 4) 실제 좌표 & 픽셀 크기
-    x_coords = ds['X'].values
-    y_coords = ds['Y'].values
-    dx = np.mean(np.diff(x_coords))
-    dy = np.mean(np.diff(y_coords))
+    # 5) coordinates and pixel size
+    x_coords = ds['X'].values; y_coords = ds['Y'].values
+    dx = np.mean(np.diff(x_coords)); dy = np.mean(np.diff(y_coords))
 
-    # 5) 'center' 모드 처리: 절대값, 컬러바 0 기준
+    # 6) choose data & normalization
     if mode == 'center':
-        data = np.abs(raw)
-        var_label = f"|{varname}|"
-        norm = plt.Normalize(0, np.nanmax(data))
+        data = raw
+        vmin, vmax = np.nanmin(data), np.nanmax(data)
+        norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
     else:
         data = raw
-        var_label = varname
         norm = plt.Normalize(np.nanmin(data), np.nanmax(data))
 
-    # 6) 메인 플롯
+    # 7) main figure
     fig, ax = plt.subplots(figsize=figsize)
     for yi in range(ny):
         for xi in range(nx):
-            active = np.where(~np.isnan(data[yi, xi, :]))[0]
-            n_act = active.size
+            vals = data[yi, xi, :]
+            active = np.where(~np.isnan(vals))[0]
             x0_pix = x_coords[xi] - dx/2
             y0_pix = y_coords[yi] - dy/2
             for j in range(total_slots):
-                r = j // col_sub
-                c = j % col_sub
-                x0 = x0_pix + c*(dx/col_sub)
-                y0 = y0_pix + (row_sub-1 - r)*(dy/row_sub)
-                w = dx/col_sub; h = dy/col_sub
-                if j < n_act:
-                    val = data[yi, xi, active[j]]
-                    rect = Rectangle((x0, y0), w, h,
+                r, c = divmod(j, s)
+                x0 = x0_pix + c*(dx/s)
+                y0 = y0_pix + (s-1-r)*(dy/s)
+                w, h = dx/s, dy/s
+                if j < active.size:
+                    val = vals[active[j]]
+                    rect = Rectangle((x0,y0), w, h,
                                      facecolor=cmap(norm(val)),
                                      edgecolor=None)
-                    ax.add_patch(rect)
                 else:
-                    # ▽ 여기를 hatch 패턴으로 변경
-                    rect = Rectangle(
-                        (x0, y0), w, h,
-                        facecolor='none',
-                        edgecolor='black',
-                        hatch='xx',    # 여기서 ‘xx’ 대신 '///', 'OO', ‘\\\\’ 등 원하는 패턴
-                        linewidth=0.5
-                    )
-                    ax.add_patch(rect)
+                    rect = Rectangle((x0,y0), w, h,
+                                     facecolor='none',
+                                     edgecolor='black',
+                                     hatch='xx',linewidth=0.5)
+                ax.add_patch(rect)
 
-    # 7) 픽셀 경계선
+    # 8) draw major pixel boundaries thicker
+    major_lw = 2.0
     for xi in range(nx+1):
-        ax.axvline(x_coords[0]-dx/2 + xi*dx, color='black', lw=0.8)
+        x = x_coords[0]-dx/2 + xi*dx
+        ax.axvline(x, color='black', linewidth=major_lw, zorder=3)
     for yi in range(ny+1):
-        ax.axhline(y_coords[0]-dy/2 + yi*dy, color='black', lw=0.8)
-
-    # → 전체 subcell 영역 테두리
-    border = Rectangle(
-        (x_coords[0]-dx/2, y_coords[0]-dy/2),
-        nx*dx, ny*dy,
-        fill=False, edgecolor='black',
-        linewidth=1.5, zorder=5
-    )
+        y = y_coords[0]-dy/2 + yi*dy
+        ax.axhline(y, color='black', linewidth=major_lw, zorder=3)
+    border = Rectangle((x_coords[0]-dx/2, y_coords[0]-dy/2), nx*dx, ny*dy,
+                       fill=False, edgecolor='black', linewidth=major_lw+0.5, zorder=4)
     ax.add_patch(border)
 
-    # 8) 축 레이블 & 틱 포맷터 (nm 단위)
-    def to_nm(x, pos):
-        return f"{x*1e9:.1f}"
+    # 9) axes format in nm
+    def to_nm(x, pos): return f"{x*1e9:.1f}"
     ax.xaxis.set_major_formatter(FuncFormatter(to_nm))
     ax.yaxis.set_major_formatter(FuncFormatter(to_nm))
-
     ax.set_xlim(x_coords[0]-dx/2, x_coords[-1]+dx/2)
     ax.set_ylim(y_coords[0]-dy/2, y_coords[-1]+dy/2)
     ax.set_aspect('equal')
-    ax.set_xlabel('X [nm]')
-    ax.set_ylabel('Y [nm]')
+    ax.set_xlabel('X [nm]'); ax.set_ylabel('Y [nm]')
     ax.set_title(f"{var_label} per Subcell")
 
-    # 9) 컬러바
+    # 10) colorbar
     sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
     sm.set_array([])
-    cbar = fig.colorbar(sm, ax=ax, orientation='vertical',
-                        fraction=0.046, pad=0.04)
-    if mode == 'center':
-        cbar.set_label(f"{var_label} (distance from 0)")
-    else:
-        cbar.set_label(var_label)
+    cbar = fig.colorbar(sm, ax=ax, orientation='vertical', fraction=0.046, pad=0.04)
+    cbar.set_label(var_label)
 
     plt.tight_layout()
 
-    # 10) 데모 플롯: subcell 인덱스 시각화 (변경 없음)
-    demo_fig, demo_ax = plt.subplots(figsize=(2, 2))
+    # 11) demo plot
+    demo_fig, demo_ax = plt.subplots(figsize=(2,2))
     for j in range(total_slots):
-        r = j // col_sub
-        c = j % col_sub
-        x0 = c*(1/s)
-        y0 = (s-1-r)*(1/s)
-        demo_ax.add_patch(Rectangle((x0, y0), 1/s, 1/s,
-                                   fill=False, edgecolor='black'))
+        r, c = divmod(j, s)
+        x0, y0 = c/s, (s-1-r)/s
+        demo_ax.add_patch(Rectangle((x0,y0), 1/s, 1/s, fill=False, edgecolor='black'))
         if j < m:
-            demo_ax.text(x0+0.5/s, y0+0.5/s, str(j),
-                         ha='center', va='center', fontsize=12)
+            demo_ax.text(x0+0.5/s, y0+0.5/s, str(j), ha='center', va='center', fontsize=12)
         else:
-            # 굵은 hatch demo
-            demo_ax.add_patch(
-                Rectangle((x0, y0), 1/s, 1/s,
-                          facecolor='none',
-                          edgecolor='black',
-                          hatch='xx',
-                          linewidth=1.0)
-            )
-
-    demo_ax.set_xlim(0, 1)
-    demo_ax.set_ylim(0, 1)
-    demo_ax.set_aspect('equal')
-    demo_ax.axis('off')
+            demo_ax.add_patch(Rectangle((x0,y0),1/s,1/s, facecolor='none', edgecolor='black', hatch='xx', linewidth=1.0))
+    demo_ax.set_xlim(0,1); demo_ax.set_ylim(0,1); demo_ax.set_aspect('equal'); demo_ax.axis('off')
     demo_ax.set_title(f"Subcell demo ({s}×{s}, m={m})")
 
     plt.tight_layout()
     return (fig, ax), (demo_fig, demo_ax)
 
 
-
 # -
 
-# ## 'center'|'width'|'amplitude' 중하나를 골라서 plot, 색깔은 그에 맞춰서 변화 
+# ## Choose one of 'center'|'width'|'amplitude' to plot, with color scaled accordingly 
 
 # 기본 호출: peak_center, custom cmap, 8″×8″
 (main_fig, main_ax), (demo_fig, demo_ax) = plot_peak_subcell(
     ds_crop0,
     mode='center',                         # 'center'|'width'|'amplitude'
-    cmap_name='Purples_r',
+    #cmap_name='Purples_r',
+    cmap_name='bwr',
+    
     #mode='width',                         # 'center'|'width'|'amplitude'
     #cmap_name='Greens_r',
     #mode='amplitude',                         # 'center'|'width'|'amplitude'
-    #cmap_name='Blues_r',
+    #cmap_name='Blues',
     #cmap_name='white_blue_purple_red_white',
     #cmap_name='Greens_r',
     figsize=(8, 8)
@@ -16509,6 +20461,52 @@ def plot_peak_subcell(
 plt.show()  # 두 개의 Figure 가 차례로 나타납니다
 # 2) SVG로 저장
 main_fig.savefig('peak_center_subcell.svg', format='svg')
+#main_fig.savefig('peak_width_subcell.svg', format='svg')
+#main_fig.savefig('peak_amplitude_subcell.svg', format='svg')
+demo_fig.savefig('subcell_demo.svg', format='svg')
+
+# 기본 호출: peak_center, custom cmap, 8″×8″
+(main_fig, main_ax), (demo_fig, demo_ax) = plot_peak_subcell(
+    ds_crop0,
+    #mode='center',                         # 'center'|'width'|'amplitude'
+    #cmap_name='Purples_r',
+    #map_name='bwr',
+    
+    mode='width',                         # 'center'|'width'|'amplitude'
+    cmap_name='Greens_r',
+    #mode='amplitude',                         # 'center'|'width'|'amplitude'
+    #cmap_name='Blues',
+    #cmap_name='white_blue_purple_red_white',
+    #cmap_name='Greens_r',
+    figsize=(8, 8)
+)
+plt.show()  # 두 개의 Figure 가 차례로 나타납니다
+# 2) SVG로 저장
+#main_fig.savefig('peak_center_subcell.svg', format='svg')
+main_fig.savefig('peak_width_subcell.svg', format='svg')
+#main_fig.savefig('peak_amplitude_subcell.svg', format='svg')
+demo_fig.savefig('subcell_demo.svg', format='svg')
+
+# 기본 호출: peak_center, custom cmap, 8″×8″
+(main_fig, main_ax), (demo_fig, demo_ax) = plot_peak_subcell(
+    ds_crop0,
+    #mode='center',                         # 'center'|'width'|'amplitude'
+    #cmap_name='Purples_r',
+    #map_name='bwr',
+    
+    #mode='width',                         # 'center'|'width'|'amplitude'
+    #cmap_name='Greens_r',
+    mode='amplitude',                         # 'center'|'width'|'amplitude'
+    cmap_name='Blues',
+    #cmap_name='white_blue_purple_red_white',
+    #cmap_name='Greens_r',
+    figsize=(8, 8)
+)
+plt.show()  # 두 개의 Figure 가 차례로 나타납니다
+# 2) SVG로 저장
+#main_fig.savefig('peak_center_subcell.svg', format='svg')
+#main_fig.savefig('peak_width_subcell.svg', format='svg')
+main_fig.savefig('peak_amplitude_subcell.svg', format='svg')
 demo_fig.savefig('subcell_demo.svg', format='svg')
 
 
@@ -16556,7 +20554,7 @@ def select_labels_in_cluster_interactive(ds, callback):
     """
     global selected_cluster_var, selected_cluster_labels
     if selected_cluster_var is None:
-        raise RuntimeError("먼저 클러스터 변수를 선택하세요.")
+        raise RuntimeError("Please select the cluster variable first.")
     da = ds[selected_cluster_var]
     labels = np.unique(da.values[~np.isnan(da.values)])
     labels = sorted(int(l) for l in labels if l >= 0)
@@ -16578,9 +20576,9 @@ def interactive_plot_peak_subcell_clusters(ds: xr.Dataset, figsize=(8,8)):
     1) Select cluster var → 2) Select labels → 
     3) Plot fixed 3×3 subcell grid, mark unused/noise as 'X',
        remove outer margins, show legend + Save SVG button.
+       Modified so pixel-level boundary lines are drawn thicker.
     """
     def on_var(var):
-        # --- 반드시 전역변수에 저장해야 이후 on_labels 에서 사용됩니다 ---
         global selected_cluster_var
         selected_cluster_var = var
         select_labels_in_cluster_interactive(ds, callback=on_labels)
@@ -16620,25 +20618,20 @@ def interactive_plot_peak_subcell_clusters(ds: xr.Dataset, figsize=(8,8)):
                     w, h = dx/s, dy/s
 
                     if j < len(act):
-                        # 활성된 peak
                         pk = act[j]
                         lab = int(clust[yi,xi,pk])
                         if lab in chosen_labels:
-                            # 선택된 클러스터 → 컬러 채움
                             face = cmap(lab2idx[lab])
                             rect = Rectangle((x0,y0), w, h,
                                              facecolor=face, edgecolor=None)
                         else:
-                            # 선택되지 않은 또는 noise(-1) → hatch 처리
                             rect = Rectangle((x0,y0), w, h,
                                              facecolor='none',
                                              edgecolor='black',
                                              hatch='XX',
                                              linewidth=0.5)
                         ax.add_patch(rect)
-
                     else:
-                        # 빈 슬롯 → hatch 처리
                         rect = Rectangle((x0,y0), w, h,
                                          facecolor='none',
                                          edgecolor='black',
@@ -16646,11 +20639,13 @@ def interactive_plot_peak_subcell_clusters(ds: xr.Dataset, figsize=(8,8)):
                                          linewidth=0.5)
                         ax.add_patch(rect)
 
-        # pixel grid + border
+        # pixel grid (픽셀 경계) 두껍게 표시
         for xi in range(nx+1):
-            ax.axvline(X[0]-dx/2 + xi*dx, color='black', lw=0.8)
+            ax.axvline(X[0]-dx/2 + xi*dx, color='black', lw=2)
         for yi in range(ny+1):
-            ax.axhline(Y[0]-dy/2 + yi*dy, color='black', lw=0.8)
+            ax.axhline(Y[0]-dy/2 + yi*dy, color='black', lw=2)
+
+        # overall border
         ax.add_patch(Rectangle((X[0]-dx/2, Y[0]-dy/2),
                                nx*dx, ny*dy,
                                fill=False, edgecolor='black', linewidth=2))
@@ -16695,15 +20690,19 @@ def interactive_plot_peak_subcell_clusters(ds: xr.Dataset, figsize=(8,8)):
 
 # -
 
-# 한 번만 호출하면, 차례로 대화형 위젯이 떠서
-# 1) cluster 변수 선택 → 2) highlight할 레이블 선택 → 3) 결과 시각화
+# Calling this once brings up interactive widgets in sequence:
+# 1) select the cluster variable -> 2) select labels to highlight -> 3) visualize the result
+interactive_plot_peak_subcell_clusters(ds_crop0)
+
+# Calling this once brings up interactive widgets in sequence:
+# 1) select the cluster variable -> 2) select labels to highlight -> 3) visualize the result
 interactive_plot_peak_subcell_clusters(ds_crop0)
 
 
 
 
 
-# ### plot_region_fitting_result_from_dsfit 함수 테스트 
+# ### Testing the plot_region_fitting_result_from_dsfit function 
 
 fig,_ = plot_region_fitting_result_from_dsfit(ds_opt2,
                                               use_zb_mask=True,
@@ -16715,7 +20714,41 @@ fig,_ = plot_region_fitting_result_from_dsfit(ds_opt2,
                                               return_fig=True)
 #fig
 
+fig,_ = plot_region_fitting_result_from_dsfit(ds_opt2,
+                                              use_zb_mask=True,
+                                              zb_mask_key='ZB_mask',
+                                              allowed_models=['Lorentzian', 'Gaussian', 'Voigt'],
+                                              show_shade=False,
+                                              y_idx=83,
+                                              x_idx=13,
+                                              return_fig=True)
+#fig
+
+
+
+# ### peak sub grid re-draw 
+
+fig,_ = plot_region_fitting_result_from_dsfit(ds_opt2,
+                                              use_zb_mask=True,
+                                              zb_mask_key='ZB_mask',
+                                              allowed_models=['Lorentzian', 'Gaussian', 'Voigt'],
+                                              show_shade=False,
+                                              y_idx=83,
+                                              x_idx=13,
+                                              return_fig=True)
+#fig
+
+
+
+
+
 # ##  peak feature extraction map for crop
+
+ds_crop0_x= 56.6E-9
+ds_crop0_y= 211.76E-9
+
+
+
 
 # +
 import numpy as np
@@ -16724,105 +20757,100 @@ import matplotlib.pyplot as plt
 import xarray as xr
 from lmfit.models import LorentzianModel, GaussianModel, VoigtModel, ConstantModel
 from functools import reduce
+from matplotlib.cm import get_cmap
 
-def plot_region_fitting_result_from_dsfit(
+
+def plot_region_fitting_result_from_dsfit_no_label(
     ds_fit: xr.Dataset,
+    y_idx: int,
+    x_idx: int,
     model_type: str = None,
     allowed_models: list = ['Lorentzian','Gaussian','Voigt'],
-    y_idx: int = None,
-    x_idx: int = None,
     weight_function_show: bool = False,
     use_zb_mask: bool = False,
     zb_mask_key: str = 'ZB_mask',
     show_shade: bool = True,
-    show_legend: bool = True,
+    highlight_labels: list = None,
     return_fig: bool = False
 ):
     """
-    Reconstruct and plot the best-fit LDOS curve for a single pixel.
+    Plot the single-pixel fit result without labels or ticks.
+
+    This function extracts LDOS data and the fitted model components
+    at the specified (y_idx, x_idx) pixel, then overlays:
+      1. Raw LDOS curve as a THICK solid line.
+      2. Composite best-fit curve as a THIN solid line.
+      3. Individual peak components as dashed lines.
+      4. (Optional) Filled highlight under components whose cluster
+         label is in highlight_labels.
 
     Parameters
     ----------
     ds_fit : xarray.Dataset
-        Combined dataset with dims ('Y','X','bias_mV','peak') and variables
-        'LDOS','bias_mV','peak_center','peak_amplitude','peak_sigma','redchi'.
-        Optional: 'background_value', 'model_type', zb_mask_key mask.
-        Must also have attrs 'weight_sigma','Ef','SCgap' if weight or shading used.
-    model_type : str or None
-        If None, uses ds_fit['model_type'] at (y_idx,x_idx); otherwise forces this model.
+        Dataset containing dimensions ('Y','X',...) and variables:
+        - 'bias_mV'
+        - 'LDOS'
+        - 'model_type'
+        - 'peak_center', 'peak_amplitude', 'peak_sigma'
+        - optionally 'background_value'
+        - optionally per-pixel cluster labels under selected_cluster_var_global.
+    y_idx, x_idx : int
+        Indices of the pixel to plot.
+    model_type : str, optional
+        Override the per-pixel model_type. If None, uses ds_fit['model_type'].
     allowed_models : list of str
-        Valid model names when model_type is None.
-    y_idx, x_idx : int or None
-        Pixel indices. If both None and use_zb_mask=True, picks a valid pixel from mask.
+        Valid model names.
     weight_function_show : bool
-        If True, overlay the convolution of the fit with the weight function.
+        If True, also plot the convolved fit with the weight function.
     use_zb_mask : bool
-        If True, mask out invalid bias points via ds_fit[zb_mask_key].
+        If True, apply zero-bias mask before plotting (not shown here).
     zb_mask_key : str
-        Name of the zero-bias mask variable.
+        Key for the zero-bias mask in ds_fit.attrs.
     show_shade : bool
-        If True, shade under individual peaks based on CdGM proximity.
-    show_legend : bool
-        If True, display legend.
+        If True, shade under selected components (requires highlight_labels).
+    highlight_labels : list of int, optional
+        Cluster labels to highlight with colored fill.
     return_fig : bool
-        If True, return (fig, df); otherwise show plot and return df.
+        If True, returns (fig, df); otherwise returns only df.
 
     Returns
     -------
     fig : matplotlib.figure.Figure (optional)
     df : pandas.DataFrame
-        Indexed by bias_mV with columns 'LDOS','best_fit','peak0',…,
-        and optional 'convoluted_fit','weight_function'.
+        DataFrame with columns: 'LDOS', 'best_fit', each component,
+        and optionally 'convoluted_fit' & 'weight_function'.
+        Indexed by 'bias_mV'.
     """
-    # 1) determine pixel indices
-    Ny, Nx = ds_fit.dims['Y'], ds_fit.dims['X']
-    if use_zb_mask and y_idx is None and x_idx is None and zb_mask_key in ds_fit:
-        raw = ds_fit[zb_mask_key].values
-        valid = np.any(~np.isnan(raw), axis=-1) if raw.ndim==3 else raw.astype(bool)
-        redchi = ds_fit['redchi'].values
-        ys, xs = np.where(valid & ~np.isnan(redchi))
-        if ys.size > 0:
-            sel = np.random.randint(len(ys))
-            y_idx, x_idx = int(ys[sel]), int(xs[sel])
-    if y_idx is None:
-        y_idx = np.random.randint(Ny)
-    if x_idx is None:
-        x_idx = np.random.randint(Nx)
-
-    # 2) extract bias & LDOS
+    # 1) Extract data
     bias = ds_fit['bias_mV'].values
     ldos = ds_fit['LDOS'].isel(Y=y_idx, X=x_idx).values
 
-    # 3) select model class
+    # 2) Determine model class
     if model_type is None:
         chosen = ds_fit['model_type'].isel(Y=y_idx, X=x_idx).item().capitalize()
     else:
         chosen = model_type.capitalize()
     if chosen not in allowed_models:
         raise ValueError(f"Model '{chosen}' not in {allowed_models}")
-    ModelClass = {
-        'Lorentzian': LorentzianModel,
-        'Gaussian':   GaussianModel,
-        'Voigt':      VoigtModel
-    }[chosen]
+    ModelClass = {'Lorentzian': LorentzianModel,
+                  'Gaussian':   GaussianModel,
+                  'Voigt':      VoigtModel}[chosen]
 
-    # 4) gather valid peak parameters
+    # 3) Retrieve peak parameters
     centers = ds_fit['peak_center'].isel(Y=y_idx, X=x_idx).values
     amps    = ds_fit['peak_amplitude'].isel(Y=y_idx, X=x_idx).values
     sigmas  = ds_fit['peak_sigma'].isel(Y=y_idx, X=x_idx).values
-    peak_idxs = [
-        i for i, (c,a,s) in enumerate(zip(centers,amps,sigmas))
-        if not (np.isnan(c) or np.isnan(a) or np.isnan(s))
-    ]
+    peak_idxs = [i for i, (c,a,s) in enumerate(zip(centers,amps,sigmas))
+                 if not (np.isnan(c) or np.isnan(a) or np.isnan(s))]
 
-    # 5) build composite model & set params
+    # 4) Build composite model
     models = []
     if 'background_value' in ds_fit:
         models.append(ConstantModel(prefix='bkg_'))
         bgv = ds_fit['background_value'].isel(Y=y_idx, X=x_idx).item()
     for i in peak_idxs:
         models.append(ModelClass(prefix=f'peak{i}_'))
-    comp = reduce(lambda a,b: a + b, models)
+    comp   = reduce(lambda a,b: a+b, models)
     params = comp.make_params()
     if 'background_value' in ds_fit:
         params['bkg_c'].set(value=bgv)
@@ -16831,47 +20859,60 @@ def plot_region_fitting_result_from_dsfit(
         params[f'peak{i}_amplitude'].set(value=amps[i])
         params[f'peak{i}_sigma'].set(value=sigmas[i])
 
-    # 6) evaluate best-fit & components
-    best_fit  = comp.eval(params=params, x=bias)
+    # 5) Evaluate fit and components
+    best_fit   = comp.eval(params=params, x=bias)
     comps_vals = comp.eval_components(params=params, x=bias)
 
-    # 7) optional weight-function convolution
+    # 6) Optional weight-function convolution
     if weight_function_show:
-        wsig = ds_fit.attrs.get('weight_sigma',1.0)
+        wsig = ds_fit.attrs.get('weight_sigma', 1.0)
         wfunc = np.exp(-bias**2/(2*wsig**2))
         conv  = np.convolve(best_fit, wfunc, mode='same')/np.sum(wfunc)
 
-    # 8) plot
-    fig, ax = plt.subplots(figsize=(6,4))
-    ax.plot(bias, ldos,      'k-', lw=1.5, alpha=0.8, label='LDOS', zorder=1)
-    ax.plot(bias, best_fit,  '-', color='C1', lw=3, label=f'{chosen} Fit', zorder=2)
-    if weight_function_show:
-        ax.plot(bias, conv, '--', color='C1', lw=2, label='Convoluted Fit', zorder=1)
+    # 7) Plotting: LDOS as thick solid, best_fit as thin solid
+    fig, ax = plt.subplots(figsize=(4,3))
+    # LDOS: thick solid line
+    ax.plot(bias, ldos, color='gray', linestyle='-', linewidth=3, zorder=2)
+    # best_fit: thin solid line
+    ax.plot(bias, best_fit, color='lightgray', linestyle='-', linewidth=1, zorder=1)
+
+    # 8) Individual components (dashed)
     for i in peak_idxs:
-        ax.plot(bias, comps_vals[f'peak{i}_'], '--', lw=1, alpha=0.6, label=f'Peak {i}', zorder=1)
+        ax.plot(bias, comps_vals[f'peak{i}_'],
+                color='gray', linestyle='--', linewidth=1, zorder=1)
 
-    # 9) optional CdGM shading
-    if show_shade and 'level_proximity' in ds_fit:
-        lvl = ds_fit['level_proximity'].isel(Y=y_idx, X=x_idx).values
-        Ef  = ds_fit.attrs.get('Ef',1.0)
-        SCg = ds_fit.attrs.get('SCgap',1.0)
-        E_mu = SCg**2/Ef
+    if weight_function_show:
+        ax.plot(bias, conv,
+                color='gray', linestyle='-.', linewidth=1, zorder=0)
+
+    # 9) Highlight selected components
+    if highlight_labels and selected_cluster_var_global:
+        cluster_arr = ds_fit[selected_cluster_var_global] \
+                         .isel(Y=y_idx, X=x_idx).values
+        cmap = get_cmap('tab10')
         for i in peak_idxs:
-            lp = lvl[i]
-            if not np.isnan(lp) and abs(lp)<SCg:
-                ax.fill_between(bias, 0, comps_vals[f'peak{i}_'], color='C2', alpha=0.3)
+            label = cluster_arr[i]
+            if label in highlight_labels:
+                ax.fill_between(
+                    bias,
+                    comps_vals[f'peak{i}_'],
+                    0,
+                    facecolor=cmap(label % 10),
+                    alpha=0.3,
+                    zorder=0
+                )
 
-    ax.axvline(0, color='gray', ls=':', lw=1)
-    ax.set_xlabel('Bias (mV)')
-    ax.set_ylabel('LDOS')
-    if show_legend:
-        ax.legend(fontsize=8, loc='best')
+    # 10) Clean up axes
+    ax.set_xticks([]), ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(True)
     plt.tight_layout()
 
-    # 10) assemble DataFrame
+    # 11) Build DataFrame
     data = {'LDOS': ldos, 'best_fit': best_fit}
     for name, arr in comps_vals.items():
-        data[name.rstrip('_')] = arr
+        if name != 'bkg_':
+            data[name.rstrip('_')] = arr
     if weight_function_show:
         data['convoluted_fit']  = conv
         data['weight_function'] = wfunc
@@ -16881,46 +20922,69 @@ def plot_region_fitting_result_from_dsfit(
     return (fig, df) if return_fig else df
 
 
+# -
+
 def plot_fitting_results_grid(
     ds_cluster: xr.Dataset,
     figsize_per_cell: tuple = (3, 3),
-    remove_subtitles: bool = False,
-    remove_labels: bool = False,
+    ds_crop0_x: float = None,
+    ds_crop0_y: float = None,
+    show_XY_location: bool = False,
     **fit_kwargs
 ):
     """
-    Arrange per-pixel fits in an Ny×Nx grid by embedding the rasterized
-    output of plot_region_fitting_result_from_dsfit into each cell.
+    Arrange per-pixel fitting plots in an Ny × Nx grid with no spacing,
+    embed each pixel’s no-label fit (rasterized) into its cell,
+    and draw a thin border around each. Optionally highlight a cell
+    nearest to (ds_crop0_x, ds_crop0_y) with a thicker border.
 
     Parameters
     ----------
     ds_cluster : xarray.Dataset
-        Dataset with dims ('Y','X',...) to iterate pixels over.
-    figsize_per_cell : tuple
-        Width and height (inches) for each subplot cell.
-    remove_subtitles : bool
-        If True, clear the inner plot titles.
-    remove_labels : bool
-        If True, clear the inner x/y axis labels and ticks.
+        Dataset with dimensions ('Y','X',...) containing fit results.
+    figsize_per_cell : tuple of float
+        Width and height (in inches) of each subplot cell.
+    ds_crop0_x, ds_crop0_y : float, optional
+        Coordinates to locate and highlight the nearest pixel.
+    show_XY_location : bool, default False
+        If True, annotate each subplot with its (X, Y) coordinate
+        in scientific notation.
     **fit_kwargs :
-        Keyword arguments passed directly to
-        plot_region_fitting_result_from_dsfit.
+        Forwarded to plot_region_fitting_result_from_dsfit_no_label.
 
     Returns
     -------
     fig : matplotlib.figure.Figure
-    axes : ndarray of Axes, shape (Ny, Nx)
-    fit_dfs : dict[(y_idx, x_idx) -> pandas.DataFrame]
+    axes : np.ndarray of Axes, shape (Ny, Nx)
+    fit_dfs : dict
+        Mapping (y_idx, x_idx) -> pandas.DataFrame of fit data.
     """
-    Ny, Nx = ds_cluster.dims['Y'], ds_cluster.dims['X']
+    # FutureWarning 해소: dims 대신 sizes 사용
+    Ny, Nx = ds_cluster.sizes['Y'], ds_cluster.sizes['X']
 
-    # create tightly spaced grid
+    # Identify highlight cell indices
+    if ds_crop0_x is not None:
+        nearest_x = ds_cluster.coords['X'].sel(X=ds_crop0_x, method='nearest').item()
+        x_idx0 = int(np.where(ds_cluster.coords['X'].values == nearest_x)[0][0])
+    else:
+        x_idx0 = None
+
+    if ds_crop0_y is not None:
+        nearest_y = ds_cluster.coords['Y'].sel(Y=ds_crop0_y, method='nearest').item()
+        y_idx0 = int(np.where(ds_cluster.coords['Y'].values == nearest_y)[0][0])
+    else:
+        y_idx0 = None
+
+    # Create figure and axes grid
     fig, axes = plt.subplots(
         Ny, Nx,
-        figsize=(figsize_per_cell[0]*Nx, figsize_per_cell[1]*Ny),
+        figsize=(figsize_per_cell[0] * Nx, figsize_per_cell[1] * Ny),
         gridspec_kw={'wspace':0, 'hspace':0, 'left':0, 'right':1, 'top':1, 'bottom':0}
     )
     axes = np.atleast_2d(axes).reshape(Ny, Nx)
+
+    # Flip rows so that y=0 is at the top
+    axes = axes[::-1, :]
 
     fit_dfs = {}
 
@@ -16928,63 +20992,67 @@ def plot_fitting_results_grid(
         for xi in range(Nx):
             ax = axes[yi, xi]
 
-            # generate the per-pixel figure
-            fig_fit, df_fit = plot_region_fitting_result_from_dsfit(
+            # Generate and rasterize the single-pixel fit
+            fig_fit, df_fit = plot_region_fitting_result_from_dsfit_no_label(
                 ds_cluster,
-                y_idx=yi,
-                x_idx=xi,
+                y_idx=yi, x_idx=xi,
                 return_fig=True,
                 **fit_kwargs
             )
-
-            # optionally strip title/labels
-            src_ax = fig_fit.axes[0]
-            if remove_subtitles:
-                src_ax.set_title('')
-            if remove_labels:
-                src_ax.set_xlabel(''); src_ax.set_ylabel('')
-                src_ax.set_xticks([]); src_ax.set_yticks([])
-
-            # render to buffer
             fig_fit.canvas.draw()
-            w, h = fig_fit.canvas.get_width_height()
-            buf = np.frombuffer(fig_fit.canvas.tostring_rgb(), dtype=np.uint8)
-            buf = buf.reshape(h, w, 3)
 
-            # embed with correct orientation
+            # buffer_rgba() 반환 memoryview → NumPy 배열로 변환
+            renderer = fig_fit.canvas.renderer
+            view = renderer.buffer_rgba()         # memoryview
+            arr = np.asarray(view)                # shape: (height, width, 4)
+            buf = arr[..., :3]                    # RGB 채널만 사용
+
+            # Display raster image
             ax.imshow(buf, origin='upper', aspect='auto')
-            ax.axis('off')
+            ax.set_xticks([]), ax.set_yticks([])
+
+            # Annotate XY location if requested
+            if show_XY_location:
+                x_val = ds_cluster.coords['X'].values[xi]
+                y_val = ds_cluster.coords['Y'].values[yi]
+                ax.text(
+                    0.01, 0.99,
+                    f"x={x_val:.2e}\ny={y_val:.2e}",
+                    transform=ax.transAxes,
+                    va='top', ha='left', fontsize='xx-small'
+                )
+
+            # Thin border; thicker for highlighted cell
+            thickness = 4.0 if (xi == x_idx0 and yi == y_idx0) else 0.5
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_linewidth(thickness)
+                spine.set_color('black')
 
             plt.close(fig_fit)
             fit_dfs[(yi, xi)] = df_fit
 
-            # draw a thin border around each cell
-            for spine in ax.spines.values():
-                spine.set_visible(True)
-                spine.set_linewidth(0.5)
-
-    fig.suptitle("Per-Pixel Fitting Results", fontsize=16)
     return fig, axes, fit_dfs
 
 
 
-# -
-
 fig, axes, fit_dfs = plot_fitting_results_grid(
     ds_crop0,
     figsize_per_cell=(2.5, 2.5),
-    remove_subtitles=False,
-    remove_labels=False,
+    #remove_subtitles=False,
+    #remove_labels=False,
     use_zb_mask=True,
     zb_mask_key='ZB_mask',
-    allowed_models=['Lorentzian','Gaussian','Voigt'],
+    #allowed_models=['Lorentzian','Gaussian','Voigt'],
+    allowed_models='Lorentzian',
     show_shade=False,
-    show_legend = False,
+    #show_legend = False,
+    
     weight_function_show=False,
 )
 plt.show()
 
-# # cropped 영역에 대해서 subgrid curve plot 새로 
+# # New subgrid curve plot for the cropped region 
 
 # +
 import numpy as np
@@ -17142,6 +21210,9 @@ def plot_region_fitting_result_from_dsfit_no_label(
     return (fig, df) if return_fig else df
 
 
+# -
+
+'''
 def plot_fitting_results_grid(
     ds_cluster: xr.Dataset,
     figsize_per_cell: tuple = (3, 3),
@@ -17208,28 +21279,137 @@ def plot_fitting_results_grid(
             plt.close(fig_fit)
             fit_dfs[(yi, xi)] = df_fit
 
-    fig.suptitle("Per-Pixel Fitting Results (No Labels)", fontsize=16)
+    #fig.suptitle("Per-Pixel Fitting Results (No Labels)", fontsize=16)
+    return fig, axes, fit_dfs'''
+
+ds_crop0
+
+'''
+
+import numpy as np
+import matplotlib.pyplot as plt
+import xarray as xr
+
+def plot_fitting_results_grid(
+    ds_cluster: xr.Dataset,
+    figsize_per_cell: tuple = (3, 3),
+    ds_crop0_x: float = None,
+    ds_crop0_y: float = None,
+    **fit_kwargs
+):
+    """
+    Arrange per-pixel fitting plots in an Ny×Nx grid with no spacing,
+    embedding the rasterized output of
+    plot_region_fitting_result_from_dsfit_no_label into each cell
+    and drawing a thin border around each. If ds_crop0_x, ds_crop0_y
+    를 입력받으면 그 값에 가장 가까운 픽셀 셀의 테두리를 두껍게 강조합니다.
+
+    Parameters
+    ----------
+    ds_cluster : xarray.Dataset
+        Dataset with dims ('Y','X',...) to iterate over pixels.
+    figsize_per_cell : tuple (width, height) in inches
+        Size of each small subplot.
+    ds_crop0_x : float, optional
+        강조할 X 좌표 (단위 동일). None 이면 강조하지 않음.
+    ds_crop0_y : float, optional
+        강조할 Y 좌표 (단위 동일). None 이면 강조하지 않음.
+    **fit_kwargs :
+        All keyword arguments passed on to
+        plot_region_fitting_result_from_dsfit_no_label.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    axes : ndarray of Axes, shape (Ny, Nx)
+    fit_dfs : dict[(y_idx, x_idx) -> pandas.DataFrame]
+    """
+    # 원본 그리드 크기
+    Ny, Nx = ds_cluster.dims['Y'], ds_cluster.dims['X']
+
+    # 강조할 셀 인덱스 계산 (sel + method='nearest' 사용)
+    if ds_crop0_x is not None:
+        nearest_x = ds_cluster.coords['X'].sel(X=ds_crop0_x, method='nearest').item()
+        x_idx0 = int(np.where(ds_cluster.coords['X'].values == nearest_x)[0][0])
+    else:
+        x_idx0 = None
+
+    if ds_crop0_y is not None:
+        nearest_y = ds_cluster.coords['Y'].sel(Y=ds_crop0_y, method='nearest').item()
+        y_idx0 = int(np.where(ds_cluster.coords['Y'].values == nearest_y)[0][0])
+    else:
+        y_idx0 = None
+
+    # Figure 및 axes 생성
+    fig, axes = plt.subplots(
+        Ny, Nx,
+        figsize=(figsize_per_cell[0] * Nx, figsize_per_cell[1] * Ny),
+        gridspec_kw={'wspace': 0, 'hspace': 0, 'left': 0, 'right': 1, 'top': 1, 'bottom': 0}
+    )
+    axes = np.atleast_2d(axes).reshape(Ny, Nx)
+
+    fit_dfs = {}
+
+    for yi in range(Ny):
+        for xi in range(Nx):
+            ax = axes[yi, xi]
+
+            # 각 픽셀 fitting 결과 생성
+            fig_fit, df_fit = plot_region_fitting_result_from_dsfit_no_label(
+                ds_cluster,
+                y_idx=yi,
+                x_idx=xi,
+                return_fig=True,
+                **fit_kwargs
+            )
+
+            # 래스터 이미지로 변환 후 표시
+            fig_fit.canvas.draw()
+            w, h = fig_fit.canvas.get_width_height()
+            buf = np.frombuffer(fig_fit.canvas.tostring_rgb(), dtype=np.uint8)
+            buf = buf.reshape(h, w, 3)
+
+            ax.imshow(buf, origin='upper', aspect='auto')
+            ax.set_xticks([]); ax.set_yticks([])
+
+            # 테두리 두께 설정: 강조셀은 2.0, 나머지는 0.5
+            thickness = 4.0 if (xi == x_idx0 and yi == y_idx0) else 0.5
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_linewidth(thickness)
+                spine.set_color('black')
+
+            plt.close(fig_fit)
+            fit_dfs[(yi, xi)] = df_fit
+
     return fig, axes, fit_dfs
+'''
+# x0y0 --> upper left corner  
+### lower new function x0y0 --> lower  left corner 
+
 
 
 
 # +
+
 import matplotlib.pyplot as plt
 
 # 1) 필요한 함수들(위에서 정의한 두 함수)를 이미 불러왔다고 가정합니다.
 
 # 2) 그리드 전체에 “no‐label” 버전 피팅 결과를 임베드
 fig, axes, fit_dfs = plot_fitting_results_grid(
-    ds_cluster=ds_crop0,                  # 사용하실 Dataset
-    figsize_per_cell=(2.5, 2.5),          # 셀 하나당 크기 (inch)
-    # plot_region_fitting_result_from_dsfit_no_label 에 전달할 옵션들
+    ds_cluster=ds_crop0,
+    figsize_per_cell=(2.5, 2.5),
     weight_function_show=False,
     use_zb_mask=True,
     zb_mask_key='ZB_mask',
     show_shade=True,
-    model_type=None,                      # None 이면 ds_fit['model_type'] 사용
-    allowed_models=['Lorentzian','Gaussian','Voigt']
+    model_type=None,
+    allowed_models=['Lorentzian','Gaussian','Voigt'],
+    #show_XY_location=True  # 좌표 표시 활성화
+    show_XY_location=False  # 좌표 표시 비활성화
 )
+plt.show()
 
 # 3) 화면에 표시
 plt.show()
@@ -17241,4405 +21421,4 @@ fig.savefig('fits_no_labels_grid.svg', format='svg')
 # 예: Y=3, X=4 픽셀
 #df_3_4 = fit_dfs[(3,4)]
 #print(df_3_4.head())
-
-# -
-
-ds_cluster.sel(cluster_label=2)
-
-
-
-# ###  cluster label만 따로 뽑아서 coloring 
-#
-#
-
-# +
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import xarray as xr
-import ipywidgets as widgets
-from IPython.display import display, clear_output
-from lmfit.models import LorentzianModel, GaussianModel, VoigtModel, ConstantModel
-from functools import reduce
-from matplotlib.cm import get_cmap
-
-# ── 인터랙티브 헬퍼 1: 어떤 data_var가 클러스터 레이블인지 선택 ──
-selected_cluster_var_global = None
-def select_cluster_data_var_interactive(ds, callback=None):
-    """
-    Let the user pick which ds.data_vars contains the per-peak cluster labels.
-    """
-    global selected_cluster_var_global
-    selector = widgets.RadioButtons(
-        options=[v for v in ds.data_vars if 'cluster' in v],
-        description='Cluster var:'
-    )
-    btn = widgets.Button(description='Confirm', button_style='primary')
-    out = widgets.Output()
-
-    def on_confirm(_):
-        global selected_cluster_var_global
-        with out:
-            clear_output()
-            selected_cluster_var_global = selector.value
-            print(f"✅ cluster var: {selected_cluster_var_global}")
-            if callback:
-                callback(selected_cluster_var_global)
-
-    btn.on_click(on_confirm)
-    display(widgets.VBox([selector, btn, out]))
-
-
-# ── 인터랙티브 헬퍼 2: 어떤 레이블(들)을 하이라이트할지 선택 ──
-selected_cluster_labels_global = None
-def select_labels_in_cluster_interactive(ds, callback=None):
-    """
-    After cluster var is chosen, pick one or more integer labels to highlight.
-    """
-    global selected_cluster_var_global, selected_cluster_labels_global
-    if not selected_cluster_var_global:
-        raise ValueError("먼저 select_cluster_data_var_interactive를 호출하세요.")
-    da = ds[selected_cluster_var_global]
-    labels = sorted(int(x) for x in np.unique(da.values) if not np.isnan(x))
-    selector = widgets.SelectMultiple(options=labels, description='Labels:')
-    btn = widgets.Button(description='Confirm', button_style='success')
-    out = widgets.Output()
-
-    def on_confirm(_):
-        global selected_cluster_labels_global
-        with out:
-            clear_output()
-            selected_cluster_labels_global = list(selector.value)
-            print(f"✅ highlight labels: {selected_cluster_labels_global}")
-            if callback:
-                callback(selected_cluster_labels_global)
-
-    btn.on_click(on_confirm)
-    display(widgets.VBox([selector, btn, out]))
-
-
-# ── 픽셀 단위 fitting plot (레이블·틱 없이) ──
-def plot_region_fitting_result_from_dsfit_no_label(
-    ds_fit: xr.Dataset,
-    y_idx:int, x_idx:int,
-    model_type: str=None,
-    allowed_models:list=['Lorentzian','Gaussian','Voigt'],
-    weight_function_show:bool=False,
-    use_zb_mask:bool=False,
-    zb_mask_key:str='ZB_mask',
-    show_shade:bool=True,
-    highlight_labels:list=None,
-    return_fig:bool=False
-):
-    """
-    Single‐pixel fit plot without titles/axes/ticks.
-    Only fill under those peak‐components whose cluster label ∈ highlight_labels.
-    """
-    # 1) 데이터 꺼내기
-    bias = ds_fit['bias_mV'].values
-    ldos = ds_fit['LDOS'].isel(Y=y_idx,X=x_idx).values
-
-    # 2) 모델 클래스 선택
-    if model_type is None:
-        chosen = ds_fit['model_type'].isel(Y=y_idx,X=x_idx).item().capitalize()
-    else:
-        chosen = model_type.capitalize()
-    if chosen not in allowed_models:
-        raise ValueError(f"Model '{chosen}' not in {allowed_models}")
-    ModelClass = {'Lorentzian':LorentzianModel,
-                  'Gaussian':  GaussianModel,
-                  'Voigt':      VoigtModel}[chosen]
-
-    # 3) peak 파라미터 가져오기
-    centers = ds_fit['peak_center'].isel(Y=y_idx,X=x_idx).values
-    amps    = ds_fit['peak_amplitude'].isel(Y=y_idx,X=x_idx).values
-    sigmas  = ds_fit['peak_sigma'].isel(Y=y_idx,X=x_idx).values
-    peak_idxs = [
-        i for i,(c,a,s) in enumerate(zip(centers,amps,sigmas))
-        if not (np.isnan(c) or np.isnan(a) or np.isnan(s))
-    ]
-
-    # 4) composite 모델 구성
-    models = []
-    if 'background_value' in ds_fit:
-        models.append(ConstantModel(prefix='bkg_'))
-        bgv = ds_fit['background_value'].isel(Y=y_idx,X=x_idx).item()
-    for i in peak_idxs:
-        models.append(ModelClass(prefix=f'peak{i}_'))
-    comp   = reduce(lambda a,b: a+b, models)
-    params = comp.make_params()
-    if 'background_value' in ds_fit:
-        params['bkg_c'].set(value=bgv)
-    for i in peak_idxs:
-        params[f'peak{i}_center'].set(value=centers[i])
-        params[f'peak{i}_amplitude'].set(value=amps[i])
-        params[f'peak{i}_sigma'].set(value=sigmas[i])
-
-    # 5) fitting 결과 계산
-    best_fit   = comp.eval(params=params, x=bias)
-    comps_vals = comp.eval_components(params=params, x=bias)
-
-    # 6) (선택) weight-function convolution
-    if weight_function_show:
-        wsig = ds_fit.attrs.get('weight_sigma',1.0)
-        wfunc = np.exp(-bias**2/(2*wsig**2))
-        conv  = np.convolve(best_fit, wfunc, mode='same')/np.sum(wfunc)
-
-    # 7) 기본 회색 곡선만 그리기
-    fig, ax = plt.subplots(figsize=(4,3))
-    ax.plot(bias, ldos,     color='lightgray', linestyle=':', linewidth=1, zorder=1)
-    ax.plot(bias, best_fit, color='gray',       linestyle='-', linewidth=3, zorder=2)
-    for i in peak_idxs:
-        ax.plot(bias, comps_vals[f'peak{i}_'], color='gray',
-                linestyle='--', linewidth=1, zorder=1)
-    if weight_function_show:
-        ax.plot(bias, conv, color='gray', linestyle='-.', linewidth=2, zorder=1)
-
-    # 8) highlight
-    if highlight_labels and selected_cluster_var_global:
-        cluster_arr = ds_fit[selected_cluster_var_global] \
-                         .isel(Y=y_idx,X=x_idx).values
-        cmap = get_cmap('Greens')
-        for i in peak_idxs:
-            if cluster_arr[i] in highlight_labels:
-                ax.fill_between(
-                    bias,
-                    comps_vals[f'peak{i}_'],
-                    0,
-                    facecolor=cmap(0.6),
-                    alpha=0.3,
-                    zorder=0
-                )
-
-    # 9) 제목·레이블·틱 제거, spine만 남기기
-    ax.set_xticks([]); ax.set_yticks([])
-    for s in ax.spines.values():
-        s.set_visible(True)
-
-    plt.tight_layout()
-
-    # 10) DataFrame 구성
-    data = {'LDOS': ldos, 'best_fit': best_fit}
-    for name, arr in comps_vals.items():
-        if name!='bkg_':
-            data[name.rstrip('_')] = arr
-    if weight_function_show:
-        data['convoluted_fit']  = conv
-        data['weight_function'] = wfunc
-    df = pd.DataFrame(data, index=bias)
-    df.index.name = 'bias_mV'
-
-    return (fig, df) if return_fig else df
-
-
-# ── 픽셀별 그림을 격자에 임베드 ──
-def plot_fitting_results_grid(
-    ds_cluster: xr.Dataset,
-    figsize_per_cell=(2.5,2.5),
-    highlight_labels=None,
-    **fit_kwargs
-):
-    """
-    Tile per-pixel no-label fits in an Ny×Nx grid with no spacing,
-    draw thin border, and forward highlight_labels.
-    """
-    Ny, Nx = ds_cluster.dims['Y'], ds_cluster.dims['X']
-    fig, axes = plt.subplots(
-        Ny, Nx,
-        figsize=(figsize_per_cell[0]*Nx,
-                 figsize_per_cell[1]*Ny),
-        gridspec_kw={'wspace':0,'hspace':0,'left':0,'right':1,'top':1,'bottom':0}
-    )
-    axes = np.atleast_2d(axes).reshape(Ny,Nx)
-    fit_dfs = {}
-
-    for y in range(Ny):
-        for x in range(Nx):
-            ax = axes[y,x]
-            fig_fit, df = plot_region_fitting_result_from_dsfit_no_label(
-                ds_cluster,
-                y_idx=y, x_idx=x,
-                highlight_labels=highlight_labels,
-                return_fig=True,
-                **fit_kwargs
-            )
-            # buffer → image
-            fig_fit.canvas.draw()
-            w,h = fig_fit.canvas.get_width_height()
-            buf = np.frombuffer(fig_fit.canvas.tostring_rgb(), dtype=np.uint8)
-            buf = buf.reshape(h,w,3)[::-1,:,:]
-            ax.imshow(buf, origin='lower', aspect='auto')
-            ax.axis('off')
-            plt.close(fig_fit)
-            fit_dfs[(y,x)] = df
-            # thin border
-            for s in ax.spines.values():
-                s.set_visible(True)
-                s.set_linewidth(0.5)
-
-    fig.suptitle("Per‐Pixel Fitting Results (No Labels)", fontsize=16)
-    return fig, axes, fit_dfs
-
-
-# ── 실행 오케스트레이터 ──
-def interactive_cluster_plot_and_grid(
-    ds_cluster, figsize_per_cell=(2.5,2.5), **plot_kwargs
-):
-    """
-    1) 클러스터 변수 선택 → 2) 레이블 선택 → 3) 그리기 → 4) SVG 저장 버튼
-    """
-    def on_labels(lbls):
-        fig, axes, dfs = plot_fitting_results_grid(
-            ds_cluster,
-            figsize_per_cell=figsize_per_cell,
-            highlight_labels=lbls,
-            **plot_kwargs
-        )
-        plt.show()
-
-        # ── 여기서 SVG 저장 버튼 추가 ──
-        save_btn = widgets.Button(
-            description='Save as SVG',
-            button_style='success'
-        )
-        out = widgets.Output()
-
-        def on_save(_):
-            with out:
-                clear_output()
-                fig.savefig('per_pixel_fitting_grid.svg', format='svg')
-                print("✅ Saved figure as 'per_pixel_fitting_grid.svg'")
-
-        save_btn.on_click(on_save)
-        display(widgets.HBox([save_btn, out]))
-
-
-    def on_cluster(var):
-        select_labels_in_cluster_interactive(
-            ds_cluster, callback=on_labels)
-
-    select_cluster_data_var_interactive(
-        ds_cluster, callback=on_cluster)
-
-
-# ── 사용 예시 ──
-interactive_cluster_plot_and_grid(
-    ds_crop0,
-    figsize_per_cell=(2.5,2.5),
-    weight_function_show=False,
-    use_zb_mask=True,
-    zb_mask_key='ZB_mask',
-    show_shade=False
-)
-
-# -
-
-ds_crop0.where(ds_crop0.cluster_label==2,drop= True).peak_center
-
-
-
-
-
-
-
-# +
-# move on to the Figure 4 2T 005 case
-# -
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ## check Pytorch & scikit learn  installation in the system 
-#
-
-# #### select several points(interactively) 
-
-# Enable Bokeh and Panel output
-output_notebook()
-pn.extension('tabulator')  # Ensure Tabulator is loaded
-
-
-# +
-import hvplot.xarray
-import holoviews as hv
-from bokeh.models import ColumnDataSource, PointDrawTool
-from bokeh.io import output_notebook
-import pandas as pd
-import panel as pn
-
-# Enable Bokeh and Panel output
-output_notebook()
-pn.extension('tabulator')  # Ensure Tabulator is loaded
-
-def interactive_points_selection_w_ldos_plot(grid_LDOS_SnD_pks, bias_mV_ref=0.0):
-    """
-    Creates an interactive LDOS plot with point selection functionality.
-    Returns a DataFrame (points_df) with selected points' coordinates.
-
-    Parameters:
-    grid_LDOS_SnD_pks (xarray.Dataset): The input dataset containing LDOS data.
-    bias_mV_ref (float): Reference bias voltage for the initial plot.
-
-    Returns:
-    points_df (pd.DataFrame): DataFrame containing X and Y coordinates of selected points.
-    """
-
-    # Step 1: Set up the interactive plot with the LDOS data at the specified bias voltage
-    ldos_plot = grid_LDOS_SnD_pks.LDOS.sel(bias_mV=bias_mV_ref, method='nearest').hvplot.image(
-        cmap='viridis', 
-        title=f'LDOS Interactive Plot (bias_mV={bias_mV_ref})', 
-        frame_height=400,  
-        frame_width=500,   
-        aspect='equal',
-        xlabel='X', ylabel='Y',  # Label the axes correctly
-        x='X', y='Y',            # Ensure the dimensions are correctly assigned
-        tools=["pan", "wheel_zoom", "box_zoom", "tap", "reset"]  # Include interaction tools
-    )
-
-    # Convert hvplot to Bokeh figure using the hvplot `bokeh` backend
-    background_fig = hv.render(ldos_plot)
-
-    # Step 2: Set up a scatter plot for dynamic point updates
-    source = ColumnDataSource(data=dict(x=[], y=[]))
-    background_fig.scatter(x="x", y="y", source=source, size=10, color="red")
-
-    # Step 3: Add PointDrawTool for interactive point selection
-    draw_tool = PointDrawTool(renderers=[background_fig.renderers[-1]], empty_value='black')
-    background_fig.add_tools(draw_tool)
-    background_fig.toolbar.active_tap = draw_tool
-
-    # Step 4: Prepare a DataFrame to store the clicked points and show it as a table
-    points_df = pd.DataFrame(columns=['X', 'Y'])
-    points_table = pn.widgets.Tabulator(points_df, width=300, height=200)
-
-    # Step 5: Function to update the DataFrame dynamically and reflect it in the table
-    def update_points(attr, old, new):
-        new_points = [(x, y) for x, y in zip(source.data['x'], source.data['y'])]  # Swap X and Y
-        nonlocal points_df
-        points_df = pd.DataFrame(new_points, columns=['X', 'Y'])  # Update DataFrame with swapped X and Y
-        points_table.value = points_df  # Reflect changes in the table
-
-    # Link changes in the ColumnDataSource to the update_points function
-    source.on_change('data', update_points)
-
-    # Step 6: Display the layout with the interactive plot and the table using Panel
-    layout = pn.Row(pn.panel(background_fig), points_table)  # Ensure the image is displayed with Panel's layout
-
-    # Return the layout to display inline
-    return layout
-
-# Usage:
-# layout  = interactive_points_selection_w_ldos_plot(grid_LDOS_SnD_pks, bias_mV_ref=0.0)
-# layout # it will show the interactive plots. select some points (red dots)
-# points_df  = layout[1].value  # ** point_df will be obtained from the points_table
-# points_df
-
-# -
-
-
-
-layout  = interactive_points_selection_w_ldos_plot(grid_LDOS_SnD_pks, bias_mV_ref=0.0)
-
-layout
-
-points_df  = layout[1].value
-points_df
-
-# +
-#grid_LDOS_SnD_pks
-
-# +
-import xarray as xr
-import numpy as np
-from scipy.optimize import curve_fit, minimize
-import matplotlib.pyplot as plt
-
-def fit_multiple_lorentzian_LDOSsingleXY(ldos_pks_data, x_target_position=None, y_target_position=None, 
-                                         initial_peak_guess='LDOS', margin2zerobias=0.1, 
-                                         margin2levels=0.1, Ef=4.4, SCgap=1.8, maxfev=20000, 
-                                         initial_amp_ratio=0.5, initial_width_ratio=1.0,
-                                         bounds_amp=(0, 1e6), bounds_wid=(0, 1e3),
-                                         visualization=False):
-    """
-    Fit Lorentzian curves to LDOS data at a single (X, Y) position in a given dataset.
-    """
-
-    def lorentzian(x, amp, cen, wid):
-        """Lorentzian function definition."""
-        return np.abs(amp) / (1 + ((x - cen) / wid)**2)
-    
-    def multiple_lorentzians(x, *params):
-        """Model with multiple Lorentzian peaks."""
-        y = np.zeros_like(x)
-        for i in range(0, len(params), 3):
-            amp, cen, wid = params[i:i+3]
-            y += lorentzian(x, amp, cen, wid)
-        return y
-    
-    def objective_function(params, x_data, ldos_smoothed):
-        """Objective function to minimize during optimization."""
-        return np.sum((multiple_lorentzians(x_data, *params) - ldos_smoothed) ** 2)
-    
-    def calculate_r_squared(ldos_smoothed, fit_result):
-        """Calculate the R-squared value."""
-        ss_res = np.sum((ldos_smoothed - fit_result) ** 2)
-        ss_tot = np.sum((ldos_smoothed - np.mean(ldos_smoothed)) ** 2)
-        return 1 - (ss_res / ss_tot)
-
-    if x_target_position is None:
-        x_target_position = np.random.choice(ldos_pks_data.X.values)
-    if y_target_position is None:
-        y_target_position = np.random.choice(ldos_pks_data.Y.values)
-
-    ldos = ldos_pks_data['LDOS'].sel(X=x_target_position, Y=y_target_position, method='nearest').values
-    ldos_smoothed = ldos_pks_data['LDOS_smoothed'].sel(X=x_target_position, Y=y_target_position, method='nearest').values
-    x_data = ldos_pks_data.bias_mV.values
-
-    if initial_peak_guess == 'LDOS':
-        peak_bias = ldos_pks_data['LDOS_smoothed_peak_bias'].sel(X=x_target_position, Y=y_target_position, method='nearest').values
-        peak_heights = ldos_pks_data['LDOS_smoothed_peak_heights'].sel(X=x_target_position, Y=y_target_position, method='nearest').values
-        peak_widths = ldos_pks_data['LDOS_smoothed_peak_widths_mV'].sel(X=x_target_position, Y=y_target_position, method='nearest').values
-    elif initial_peak_guess == '2deriv':
-        peak_bias = ldos_pks_data['LDOS_peak_bias_2nd'].sel(X=x_target_position, Y=y_target_position, method='nearest').values
-        peak_heights = ldos_pks_data['LDOS_peak_height_2nd'].sel(X=x_target_position, Y=y_target_position, method='nearest').values
-        peak_widths = ldos_pks_data['LDOS_2deriv_smoothed_peak_widths_mV'].sel(X=x_target_position, Y=y_target_position, method='nearest').values
-
-    peak_dim = len(peak_bias)
-    amplitude = np.full((peak_dim,), np.nan)
-    center = np.full((peak_dim,), np.nan)
-    width = np.full((peak_dim,), np.nan)
-    aspect_ratio_map = np.full((peak_dim,), np.nan)
-    levels_proximity_map = np.full((peak_dim,), np.nan)
-    fitted_ldos = np.full((len(x_data),), np.nan)
-
-    E_mu = (SCgap ** 2) / Ef
-    n_min = int(np.floor(x_data.min() / E_mu))
-    n_max = int(np.ceil(x_data.max() / E_mu))
-
-    levels = [n * E_mu for n in range(n_min, n_max + 1)]
-    half_levels = [(n + 0.5) * E_mu for n in range(n_min, n_max)]
-
-    initial_guesses = []
-    valid_indices = ~np.isnan(peak_bias) & ~np.isnan(peak_heights)
-    for pb, ph, pw in zip(peak_bias[valid_indices], peak_heights[valid_indices], peak_widths[valid_indices]):
-        initial_guesses.extend([ph * initial_amp_ratio, pb, pw * initial_width_ratio])
-
-    fitting_results = {}
-    try:
-        popt_cf, _ = curve_fit(
-            multiple_lorentzians, 
-            x_data, 
-            ldos_smoothed, 
-            p0=initial_guesses, 
-            bounds=([0, -np.inf, 0] * peak_dim, [np.inf, np.inf, np.inf] * peak_dim),
-            maxfev=maxfev
-        )
-        fit_result_cf = multiple_lorentzians(x_data, *popt_cf)
-        r_squared_cf = calculate_r_squared(ldos_smoothed, fit_result_cf)
-        if r_squared_cf > 0:
-            fitting_results['curve_fit'] = (popt_cf, fit_result_cf, r_squared_cf)
-        else:
-            print(f"Default curve_fit resulted in negative R-squared: {r_squared_cf:.4f}. Trying other methods.")
-            raise ValueError("Negative R-squared")
-    except (RuntimeError, ValueError):
-        print("Default curve_fit failed or provided negative R-squared.")
-
-    try:
-        popt_lm, _ = curve_fit(
-            multiple_lorentzians, 
-            x_data, 
-            ldos_smoothed, 
-            p0=initial_guesses, 
-            method='lm', 
-            maxfev=maxfev
-        )
-        fit_result_lm = multiple_lorentzians(x_data, *popt_lm)
-        r_squared_lm = calculate_r_squared(ldos_smoothed, fit_result_lm)
-        fitting_results['Levenberg-Marquardt'] = (popt_lm, fit_result_lm, r_squared_lm)
-    except RuntimeError:
-        print("Levenberg-Marquardt fitting failed: This method does not support bounds.")
-
-    try:
-        result_nm = minimize(objective_function, initial_guesses, args=(x_data, ldos_smoothed), method='nelder-mead', options={'maxiter': 1000})
-        fit_result_nm = multiple_lorentzians(x_data, *result_nm.x)
-        r_squared_nm = calculate_r_squared(ldos_smoothed, fit_result_nm)
-        fitting_results['Nelder-Mead'] = (result_nm.x, fit_result_nm, r_squared_nm)
-    except RuntimeError:
-        print("Nelder-Mead fitting failed: This method does not support bounds.")
-
-    try:
-        result_bfgs = minimize(objective_function, initial_guesses, args=(x_data, ldos_smoothed), method='BFGS', options={'maxiter': 1000})
-        fit_result_bfgs = multiple_lorentzians(x_data, *result_bfgs.x)
-        r_squared_bfgs = calculate_r_squared(ldos_smoothed, fit_result_bfgs)
-        fitting_results['BFGS'] = (result_bfgs.x, fit_result_bfgs, r_squared_bfgs)
-    except RuntimeError:
-        print("BFGS fitting failed: This method does not support bounds.")
-
-    if fitting_results:
-        best_method = max(fitting_results, key=lambda k: fitting_results[k][2])
-        popt, fit_result, r_squared = fitting_results[best_method]
-        print(f"Best fitting method: {best_method} with R-squared = {r_squared:.4f}")
-        if best_method != 'curve_fit' and any(popt[::3] < 0):
-            print(f"Warning: {best_method} does not support bounds, and some amplitude values are negative.")
-    else:
-        print("All fitting methods failed.")
-        popt = []
-        fit_result = np.zeros_like(x_data)
-        r_squared = np.nan
-
-    for i in range(0, len(popt), 3):
-        amp, cen, wid = popt[i:i+3]
-        amplitude[i // 3] = amp
-        center[i // 3] = cen
-        width[i // 3] = wid
-        aspect_ratio_map[i // 3] = amp / wid
-        closest_level = min(levels + half_levels, key=lambda level: np.abs(cen - level))
-        if np.abs(cen - closest_level) <= margin2levels:
-            levels_proximity_map[i // 3] = closest_level
-        else:
-            levels_proximity_map[i // 3] = np.nan
-
-    fitted_ldos = fit_result
-
-
-    if visualization:
-        fig, axs = plt.subplots(2, 2, figsize=(14, 12))
-
-        axs[0, 0].plot(ldos_pks_data.bias_mV.values, ldos, color='black', label='LDOS')
-        axs[0, 0].plot(ldos_pks_data.bias_mV.values, ldos_smoothed, color='skyblue', linewidth=2, alpha=0.7, label='LDOS Smoothed')
-        for i, (pb, ph, pw) in enumerate(zip(peak_bias[valid_indices], peak_heights[valid_indices], peak_widths[valid_indices])):
-            color = f'C{i}'
-            axs[0, 0].scatter(pb, ph, color=color, marker='o', s=50, label=f'Peak {i}')
-            axs[0, 0].hlines(ph / 2, pb - pw / 2, pb + pw / 2, color=color, linestyle='--', alpha=0.7)
-            axs[0, 0].text(pb, ph + 0.05 * max(ldos_smoothed), f'{i}', color=color, fontsize=12, ha='center')
-        axs[0, 0].set_title(f'LDOS with Peaks (X={x_target_position:.2e}, Y={y_target_position:.2e})')
-        axs[0, 0].set_xlabel('Bias (mV)')
-        axs[0, 0].set_ylabel('LDOS (A/V)')
-        axs[0, 0].legend()
-
-        axs[0, 1].plot(x_data, ldos_smoothed, color='black', label='LDOS Smoothed')
-        axs[0, 1].plot(x_data, fit_result, color='red', label=f'{best_method} Fit', linewidth=2)
-        for i in range(0, len(popt), 3):
-            amp, cen, wid = popt[i:i+3]
-            axs[0, 1].plot(x_data, lorentzian(x_data, amp, cen, wid), linestyle='--', alpha=0.7)
-            axs[0, 1].scatter(cen, amp, s=50)
-        axs[0, 1].set_title('Lorentzian Fit Results')
-        axs[0, 1].set_xlabel('Bias (mV)')
-        axs[0, 1].set_ylabel('LDOS (A/V)')
-        axs[0, 1].legend()
-
-        ldos_map = ldos_pks_data.LDOS.sel(bias_mV=0, method='nearest')
-        ldos_map.plot(ax=axs[1, 0], cmap='viridis', robust=True)
-        axs[1, 0].scatter([x_target_position], [y_target_position], color='red', s=100, marker='x')
-        axs[1, 0].set_title('LDOS Map at bias_mV = 0')
-
-        axs[1, 1].plot(x_data, ldos_smoothed, color='black', label='LDOS Smoothed')
-        axs[1, 1].plot(x_data, fit_result, color='red', label=f'{best_method} Fit', linewidth=2)
-        for i in range(0, len(popt), 3):
-            amp, cen, wid = popt[i:i+3]
-            axs[1, 1].plot(x_data, lorentzian(x_data, amp, cen, wid), linestyle='--', alpha=0.7)
-            axs[1, 1].scatter(cen, amp, s=50)
-            if np.abs(cen) <= margin2zerobias:
-                axs[1, 1].fill_between(x_data, 0, lorentzian(x_data, amp, cen, wid), color='black', alpha=0.2)
-            else:
-                closest_level = min(levels + half_levels, key=lambda level: np.abs(cen - level))
-                if np.abs(cen - closest_level) <= margin2levels:
-                    color = 'blue' if closest_level in levels else 'red'
-                    axs[1, 1].fill_between(x_data, 0, lorentzian(x_data, amp, cen, wid), color=color, alpha=0.2)
-        xlim = (x_data.min(), x_data.max())
-        ylim = axs[1, 1].get_ylim()  
-        for level in levels:
-            if xlim[0] <= level <= xlim[1]:  
-                axs[1, 1].axvline(level, color='blue', linestyle=':', alpha=0.4)
-        for level in half_levels:
-            if xlim[0] <= level <= xlim[1]:  
-                axs[1, 1].axvline(level, color='red', linestyle=':', alpha=0.4)
-        axs[1, 1].axvline(0, color='black', linestyle=':', linewidth=1, alpha=0.4)
-        axs[1, 1].set_xlim(xlim)
-        axs[1, 1].set_ylim(ylim)
-        axs[1, 1].set_title('Lorentzian Fit Results with Levels')
-        axs[1, 1].set_xlabel('Bias (mV)')
-        axs[1, 1].set_ylabel('LDOS (A/V)')
-        axs[1, 1].legend()
-
-        plt.tight_layout()
-        plt.show()
-
-    fitted_dataset = xr.Dataset(
-        {
-            "amplitude": (["peak"], amplitude),
-            "center": (["peak"], center),
-            "width": (["peak"], width),
-            "aspect_ratio": (["peak"], aspect_ratio_map),
-            "level_proximity": (["peak"], levels_proximity_map),
-            "r_squared": ([], r_squared),
-            "fit_result": (["bias_mV"], fitted_ldos),
-        },
-        coords={
-            "peak": np.arange(peak_dim),
-            "bias_mV": x_data
-        },
-        attrs={
-            **ldos_pks_data.attrs,
-            "Ef": Ef,
-            "margin2zerobias": margin2zerobias,
-            "margin2levels": margin2levels
-        }
-    )
-
-    return fitted_dataset
-
-# -
-
-###### ldos_pks_data_cropped
-x_target_position = points_df['X'].iloc[-2]  # Last X value
-y_target_position = points_df['Y'].iloc[-2]  # Last Y value
-ldos_pks_data_fitted = fit_multiple_lorentzian_LDOSsingleXY(ldos_pks_data = grid_LDOS_SnD_pks,
-                                                           x_target_position = x_target_position,
-                                                           y_target_position = y_target_position,
-                                                           margin2zerobias=0.15,
-                                                           margin2levels=0.15,
-                                                            maxfev=100000,
-                                                            bounds_amp=(0, 1e6),
-                                                            bounds_wid=(0, 1e3),
-                                                           initial_peak_guess='2deriv',visualization=True)
-# +
-import matplotlib.pyplot as plt
-import matplotlib.patheffects as path_effects
-import numpy as np
-import xarray as xr
-import hvplot.xarray
-import pandas as pd
-import matplotlib.cm as cm
-
-
-def fit_multiple_lorentzian_LDOS_points_N_plot(ldos_pks_data, points_df, bias_mV_ref=0.0, margin2zerobias=0.15, margin2levels=0.15, 
-                                                maxfev=100000, initial_peak_guess='2deriv', wrap_col=4, Ef=4.4, SCgap=1.8):
-    """
-    Perform Lorentzian fitting on multiple (X, Y) points provided by the user.
-    Show both the LDOS map with selected points and the Lorentzian fitting results.
-
-    Parameters:
-    - ldos_pks_data: xarray.Dataset
-        LDOS data containing the `LDOS` variable.
-    - points_df: pandas.DataFrame
-        DataFrame containing the selected points with columns ['X', 'Y'].
-    - bias_mV_ref: float, optional
-        Reference bias voltage for initial LDOS map plot. Default is 0.0 mV.
-    - margin2zerobias: float, optional
-        Margin for fitting close to zero bias. Default is 0.15.
-    - margin2levels: float, optional
-        Margin for fitting close to levels. Default is 0.15.
-    - maxfev: int, optional
-        Maximum function evaluations for fitting. Default is 100000.
-    - initial_peak_guess: str, optional
-        Method for initial peak guess. Default is '2deriv'.
-    - wrap_col: int, optional
-        Number of columns to wrap the Lorentzian plots. Default is 4.
-    - Ef: float, optional
-        Fermi energy for calculating energy levels. Default is 4.4.
-    - SCgap: float, optional
-        Superconducting gap for calculating energy levels. Default is 1.8.
-
-    Returns:
-    - ldos_pks_data_fitted_points: xarray.Dataset
-        Dataset containing Lorentzian fitting results for each selected point.
-    """
-
-    # Step 1: Plot LDOS Map with Selected Points
-    fitted_datasets = []
-    ldos_map = ldos_pks_data.LDOS.sel(bias_mV=bias_mV_ref, method='nearest')
-
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ldos_map.plot(ax=ax, cmap='viridis')
-    ax.set_aspect('equal')
-
-    cmap = plt.get_cmap('tab10')
-    for i, (x_target_position, y_target_position) in points_df.iterrows():
-        color = cmap(i % cmap.N)  # Use discrete colormap for consistent colors
-        ax.scatter(x_target_position, y_target_position, color=color, s=150, marker='o', alpha=0.5, linewidths=3)
-        text = ax.text(x_target_position, y_target_position, f'{i+1}',
-                       color=color, fontsize='large', fontweight='bold', ha='left', va='bottom')
-        text.set_path_effects([path_effects.Stroke(linewidth=3, foreground='white'), path_effects.Normal()])
-
-    plt.title('LDOS Map with Selected Points')
-    plt.xlabel('X (position)')
-    plt.ylabel('Y (position)')
-    plt.show()
-
-    # Step 2: Perform Lorentzian Fitting for Each Point
-    for i, (x_target_position, y_target_position) in points_df.iterrows():
-        print(f"Fitting point {i + 1}: X={x_target_position:.2e}, Y={y_target_position:.2e}")
-
-        # Call the single-point fitting function for each point
-        fitted_dataset = fit_multiple_lorentzian_LDOSsingleXY(
-            ldos_pks_data=ldos_pks_data,
-            x_target_position=x_target_position,
-            y_target_position=y_target_position,
-            margin2zerobias=margin2zerobias,
-            margin2levels=margin2levels,
-            maxfev=maxfev,
-            initial_peak_guess=initial_peak_guess,
-            visualization=False
-        )
-
-        fitted_dataset = fitted_dataset.assign_coords({'X': x_target_position, 'Y': y_target_position})
-
-        if fitted_dataset is not None:
-            fitted_datasets.append(fitted_dataset)
-        else:
-            print(f"Fitting failed for point {i + 1}")
-
-    if fitted_datasets:
-        ldos_pks_data_fitted_points = xr.concat(fitted_datasets, dim='point')
-    else:
-        raise ValueError("No fitted datasets were generated.")
-
-    # Step 3: Plot Lorentzian Fitting Results
-    def lorentzian(x, amp, cen, wid):
-        return np.abs(amp) / (1 + ((x - cen) / wid)**2)
-
-    num_points = ldos_pks_data_fitted_points.dims['point']
-    rows = (num_points + wrap_col - 1) // wrap_col
-    fig, axes = plt.subplots(rows, wrap_col, figsize=(wrap_col * 5, rows * 5))
-    axes = axes.flatten()
-
-    E_mu = (SCgap ** 2) / Ef
-    xlim = ldos_pks_data_fitted_points.bias_mV.min().item(), ldos_pks_data_fitted_points.bias_mV.max().item()
-    n_min = int(np.floor(xlim[0] / E_mu))
-    n_max = int(np.ceil(xlim[1] / E_mu))
-    levels = [n * E_mu for n in range(n_min, n_max + 1)]
-    half_levels = [(n + 0.5) * E_mu for n in range(n_min, n_max)]
-
-    for i in range(num_points):
-        ax = axes[i]
-        point_data = ldos_pks_data_fitted_points.isel(point=i)
-        x_data = point_data.bias_mV.values
-        fit_result = point_data.fit_result.values
-        amplitude = point_data.amplitude.values
-        center = point_data.center.values
-        width = point_data.width.values
-        r_squared = point_data.r_squared.item()
-
-        if ldos_pks_data is not None:
-            x_pos, y_pos = point_data.X.item(), point_data.Y.item()
-            ldos_curve = ldos_pks_data['LDOS'].sel(X=x_pos, Y=y_pos, method='nearest').values
-            color = cmap(i % cmap.N)  # Use the same color as the point marker for consistency
-            ax.plot(x_data, ldos_curve, color=color, label='Original LDOS', alpha=0.8)
-
-        ax.plot(x_data, fit_result, color='red', label='Fit', linewidth=3)
-        ax.scatter(center, amplitude, color='blue', marker='o')
-
-        for j in range(len(amplitude)):
-            peak_curve = lorentzian(x_data, amplitude[j], center[j], width[j])
-            ax.plot(x_data, peak_curve, linestyle='--', alpha=0.6)
-            if np.abs(center[j]) <= 0.1:  # Highlight near zero with gray
-                ax.fill_between(x_data, 0, peak_curve, color='gray', alpha=0.5)
-            elif center[j] > 0 and center[j] == int(center[j]):  # Highlight positive integer centers with blue
-                ax.fill_between(x_data, 0, peak_curve, color='blue', alpha=0.5)
-
-        for level in levels:
-            if xlim[0] <= level <= xlim[1]:
-                ax.axvline(level, color='blue', linestyle=':', alpha=0.4)
-        for level in half_levels:
-            if xlim[0] <= level <= xlim[1]:
-                ax.axvline(level, color='red', linestyle=':', alpha=0.4)
-
-        ax.set_xlim(x_data.min(), x_data.max())
-        ax.set_title(f'Point {i + 1}: X={point_data.X.values:.2e}, Y={point_data.Y.values:.2e} \nR^2 = {r_squared:.2f}')
-        ax.set_xlabel('Bias (mV)')
-        ax.set_ylabel('LDOS (A/V)')
-        ax.legend()
-
-    for j in range(i + 1, len(axes)):
-        fig.delaxes(axes[j])
-
-    plt.tight_layout()
-    plt.show()
-
-    return ldos_pks_data_fitted_points
-
-# Suggested function name: fit_multiple_lorentzian_LDOS_points_N_plot
-
-# Example use
-# grid_LDOS_SnD_pks_points =  fit_multiple_lorentzian_LDOS_points_N_plot(grid_LDOS_SnD_pks, points_df=points_df, bias_mV_ref=0.0, margin2zerobias=0.15, margin2levels=0.15,
-#                                            maxfev=100000, initial_peak_guess='2deriv', wrap_col=4, Ef=4.4, SCgap=1.8)
-
-
-
-# -
-
-grid_LDOS_SnD_pks_points = fit_multiple_lorentzian_LDOS_points_N_plot(grid_LDOS_SnD_pks,
-                                                                      points_df=points_df,
-                                                                      bias_mV_ref=0.0, 
-                                                                      margin2zerobias=0.15,
-                                                                      margin2levels=0.15, 
-                                                                      maxfev=100000,
-                                                                      initial_peak_guess='2deriv',
-                                                                      wrap_col=4, Ef=4.4, SCgap=1.8)
-
-grid_LDOS_SnD_pks
-
-
-grid_LDOS_SnD_pks_points
-
-# +
-#grid_LDOS_SnD_pks_points
-#grid_LDOS_SnD
-
-
-# -
-
-
-
-# %%time
-grid_LDOS_SnD_pks_Lorentzian_fit = fit_lorentzian_LDOS_region(grid_LDOS_SnD_pks, initial_amp_ratio=0.5, margin2zerobias=0.15,
-    margin2levels=0.15,initial_wid_ratio=1.0)
-grid_LDOS_SnD_pks_Lorentzian_fit
-
-grid_LDOS_SnD_pks_Lorentzian_fit.to_netcdf('grid_LDOS_SnD_pks_0T_002Lorentzian_fit.nc')
-
-# +
-fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-
-#  fit_converged (cmap: viridis)
-grid_LDOS_SnD_pks_Lorentzian_fit.fit_converged.plot(ax=axes[0], cmap='viridis')
-
-#  r_squared (cmap: plasma)
-grid_LDOS_SnD_pks_Lorentzian_fit.r_squared.plot(ax=axes[1], cmap='plasma')
-
-#  bias_mV = 0에서의 fit_result (cmap: inferno)
-bias_mV_index = (grid_LDOS_SnD_pks_Lorentzian_fit.bias_mV == 0).argmax().item()
-grid_LDOS_SnD_pks_Lorentzian_fit.fit_result.isel(bias_mV=bias_mV_index).plot(ax=axes[2], cmap='inferno')
-
-# 
-titles = ['Fit Converged', 'R-squared', 'Fit Result at bias_mV = 0']
-for ax, title in zip(axes.ravel(), titles):
-    ax.set_title(title, fontsize='large')
-    ax.set_aspect('equal')
-
-plt.tight_layout()
-plt.show()
-# -
-
-
-grid_LDOS_SnD_pks_Lorentzian_fit#.amplitude.where(center_near_zero_mask)
-
-
-
-# +
-import numpy as np
-import matplotlib.pyplot as plt
-
-# Near Center = 0 
-tolerance = 1
-center_near_zero_mask = np.abs(grid_LDOS_SnD_pks_Lorentzian_fit.center) < tolerance
-
-# Select only the entries where center is near zero and calculate the mean along the 'peak' dimension to create 2D data
-amp_filtered = grid_LDOS_SnD_pks_Lorentzian_fit.amplitude.where(center_near_zero_mask).mean(dim='peak')
-width_filtered = grid_LDOS_SnD_pks_Lorentzian_fit.width.where(center_near_zero_mask).mean(dim='peak')
-center_filtered = grid_LDOS_SnD_pks_Lorentzian_fit.center.where(center_near_zero_mask).mean(dim='peak')
-level_proximity_filtered = grid_LDOS_SnD_pks_Lorentzian_fit.level_proximity.where(center_near_zero_mask).mean(dim='peak')
-
-# Visualize the 4 filtered results
-fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-
-# First plot: Amplitude (cmap: viridis)
-amp_filtered.plot(ax=axes[0], cmap='viridis')
-axes[0].set_title('Amplitude (Center ~ 0)', fontsize='large')
-axes[0].set_aspect('equal')
-
-# Second plot: Width (cmap: plasma)
-width_filtered.plot(ax=axes[1], cmap='plasma')
-axes[1].set_title('Width (Center ~ 0)', fontsize='large')
-axes[1].set_aspect('equal')
-
-# Third plot: Center (cmap: inferno)
-center_filtered.plot(ax=axes[2], cmap='inferno')
-axes[2].set_title('Center (Center ~ 0)', fontsize='large')
-axes[2].set_aspect('equal')
-
-# Fourth plot: Level Proximity (cmap: cividis)
-level_proximity_filtered.plot(ax=axes[3], cmap='cividis')
-axes[3].set_title('Level Proximity (Center ~ 0)', fontsize='large')
-axes[3].set_aspect('equal')
-
-# Adjust layout
-plt.tight_layout()
-plt.show()
-
-
-# +
-#grid_LDOS_SnD_pks
-# -
-
-#
-
-
-
-# +
-# Define tolerance for bias_mV near zero
-tolerance = 0.01
-bias_near_zero_mask = np.abs(grid_LDOS_SnD_pks.bias_mV) <= tolerance
-
-# Background: LDOS data filtered within the tolerance range of bias_mV near zero
-ldos_filtered = grid_LDOS_SnD_pks.LDOS.where(
-    (grid_LDOS_SnD_pks.bias_mV < 0 + tolerance) & (grid_LDOS_SnD_pks.bias_mV > 0 - tolerance)
-).mean(dim='bias_mV')
-
-# Create a 2x2 figure with 4 subplots
-fig, axes = plt.subplots(2, 2, figsize=(15, 10))  # 2x2 grid
-
-# First plot: Amplitude with grey background
-ldos_filtered.plot(ax=axes[0, 0], cmap='Greys', alpha=1, robust=True)
-amp_filtered.plot(ax=axes[0, 0], cmap='viridis', alpha=0.5)  # Overlay points with transparency
-axes[0, 0].set_title('Amplitude (Center ~ 0)')
-
-# Second plot: Width with grey background
-ldos_filtered.plot(ax=axes[0, 1], cmap='Greys', alpha=1, robust=True)
-width_filtered.plot(ax=axes[0, 1], cmap='plasma', alpha=0.5)  # Overlay points with transparency
-axes[0, 1].set_title('Width (Center ~ 0)')
-
-# Third plot: Center with grey background
-ldos_filtered.plot(ax=axes[1, 0], cmap='Greys', alpha=1, robust=True)
-center_filtered.plot(ax=axes[1, 0], cmap='inferno', alpha=0.5)  # Overlay points with transparency
-axes[1, 0].set_title('Center (Center ~ 0)')
-
-# Fourth plot: LDOS background with viridis and Level Proximity as scatter
-ldos_filtered.plot(ax=axes[1, 1], cmap='viridis', alpha=1, robust=True)  # Viridis background for this plot
-Y, X = np.meshgrid(grid_LDOS_SnD_pks_Lorentzian_fit.Y, grid_LDOS_SnD_pks_Lorentzian_fit.X, indexing='ij')
-sc = axes[1, 1].scatter(X, Y, c=level_proximity_filtered, cmap='cividis', edgecolor='black', marker='o', alpha=0.5)  # Overlay points with transparency
-axes[1, 1].set_title('LDOS Background with Level Proximity')
-
-# Add color bar for the scatter plot in the fourth subplot
-plt.colorbar(sc, ax=axes[1, 1], label='Level Proximity')
-
-# Use a loop to set aspect and font size for all subplots
-for ax in axes.ravel():
-    ax.set_aspect('equal')
-    ax.title.set_fontsize('large')
-
-# Adjust layout
-plt.tight_layout()
-plt.show()
-
-# -
-
-
-
-
-
-
-
-
-# # 4T 
-
-# +
-grid_LDOS = GS_LDOS_4T_008.copy()
-
-grid_LDOS.sel(bias_mV = slice(1.2,-1.2))
-# -
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ### crop grid_LDOS_pks_prprt XY range 
-#
-
-grid_LDOS.where(
-    (grid_LDOS.X>3.2E-8)&
-    (grid_LDOS.X<5.0E-8)& 
-    (grid_LDOS.Y>2.2E-8)&
-    (grid_LDOS.Y<4.0E-8)).LDOS.sel(bias_mV=0, method = 'nearest').plot(robust  = True)
-
-
-
-grid_LDOS_pks_prprt_crop = grid_LDOS_pks_prprt.where(
-    (grid_LDOS.X>3.2E-8)&
-    (grid_LDOS.X<5.0E-8)& 
-    (grid_LDOS.Y>2.2E-8)&
-    (grid_LDOS.Y<4.0E-8), drop = True)
-
-# #### dataframe preparation 
-# *  whole area or cropped area?
-
-# ##  crop grid_LDOS_SnD_pks 
-
-grid_LDOS_SnD_pks
-
-grid_LDOS_SnD_pks_crop = grid_LDOS_SnD_pks.copy()#.where( (grid_LDOS.X<-3.9E-7)&(grid_LDOS.Y<2.8E-7), drop= True).copy()
-grid_LDOS_SnD_pks_crop= grid_LDOS_SnD_pks_crop[['LDOS_peak_bias_2nd','LDOS_peak_height_2nd','LDOS_2deriv_smoothed_peak_widths_mV','LDOS_2deriv_smoothed_peak_heights']]
-grid_LDOS_SnD_pks_crop
-
-
-# ### conver to dataframe
-
-grid_LDOS_pks_df = grid_LDOS_SnD_pks_crop.to_dataframe().reset_index()
-grid_LDOS_pks_df = grid_LDOS_pks_df[grid_LDOS_pks_df.LDOS_peak_bias_2nd.notna()]
-grid_LDOS_pks_df= grid_LDOS_pks_df.rename(
-    columns = {'LDOS_peak_bias_2nd' : 'bias_mV',
-               'LDOS_peak_height_2nd' : 'peak_heights',
-               'LDOS_2deriv_smoothed_peak_widths_mV' : 'peak_widths',
-               'LDOS_2deriv_smoothed_peak_heights' : 'peak_prominences'
-              })
-grid_LDOS_pks_df
-
-# ##### in case of cropping bias_mV range 
-
-# +
-
-# filtering bias_mV range 
-#grid_LDOS_pks_df = grid_LDOS_pks_df[(grid_LDOS_pks_df.bias_mV>-0.7)&(grid_LDOS_pks_df.bias_mV<0.7)]
-grid_LDOS_pks_df
-# -
-
-grid_LDOS_pks_df.to_pickle('grid_LDOS_pks_df.pkl') 
-
-# # 2T 
-
-grid_LDOS = GS_LDOS_0T_002.copy()
-
-grid_LDOS_SnD = smoothing_and_deriv_LDOS(grid_LDOS,window_length_ratio=0.05 )
-#find peaks in grid_LDOS_SnD
-# find peaks 
-grid_LDOS_SnD_pks = find_pks_grid_LDOS(grid_LDOS_SnD)
-#grid_LDOS_SnD_pks
-plot_ldos_with_pks(grid_LDOS_SnD_pks, wrap_ncols=4, num_random_points=16)
-
-grid_LDOS_SnD_pks_crop = grid_LDOS_SnD_pks.copy()#.where( (grid_LDOS.X<-3.9E-7)&(grid_LDOS.Y<2.8E-7), drop= True).copy()
-grid_LDOS_SnD_pks_crop= grid_LDOS_SnD_pks_crop[['LDOS_peak_bias_2nd','LDOS_peak_height_2nd','LDOS_2deriv_smoothed_peak_widths_mV','LDOS_2deriv_smoothed_peak_heights']]
-grid_LDOS_SnD_pks_crop
-
-
-# ### conver to dataframe
-
-grid_LDOS_pks_df = grid_LDOS_SnD_pks_crop.to_dataframe().reset_index()
-grid_LDOS_pks_df = grid_LDOS_pks_df[grid_LDOS_pks_df.LDOS_peak_bias_2nd.notna()]
-grid_LDOS_pks_df= grid_LDOS_pks_df.rename(
-    columns = {'LDOS_peak_bias_2nd' : 'bias_mV',
-               'LDOS_peak_height_2nd' : 'peak_heights',
-               'LDOS_2deriv_smoothed_peak_widths_mV' : 'peak_widths',
-               'LDOS_2deriv_smoothed_peak_heights' : 'peak_prominences'
-              })
-grid_LDOS_pks_df
-
-
-
-grid_LDOS_pks_df.to_pickle('grid_LDOS_pks_2T_df.pkl') 
-
-# ##  load pickle data 
-
-# +
-import pickle
-
-# Open the file in binary mode and load the content
-with open('grid_LDOS_pks_2T_df.pkl', 'rb') as file:
-    grid_LDOS_pks_df = pickle.load(file)
-# -
-
-
-grid_LDOS_pks_df
-
-# ### Standardization 
-
-# +
-from sklearn.metrics import silhouette_score
-import numpy as np
-import umap
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
-from sklearn.model_selection import train_test_split
-from scipy.spatial import distance_matrix
-
-
-def find_best_umap_params(dataframe, features, n_neighbors_list, min_dist_list, n_clusters=4, random_state=21, sampling_fraction=0.1):
-    """
-    Function to find the best combination of n_neighbors and min_dist using silhouette score.
-
-    Parameters:
-    - dataframe: pd.DataFrame, input dataframe with features.
-    - features: list, list of features to use for standardization and UMAP.
-    - n_neighbors_list: list, list of values for n_neighbors to test.
-    - min_dist_list: list, list of values for min_dist to test.
-    - n_clusters: int, number of clusters for KMeans clustering (default is 4).
-    - random_state: int, random seed for reproducibility (default is 21).
-    - sampling_fraction: float, fraction of data to sample for faster fitting (default is 0.1).
-
-    Returns:
-    - best_params: dict, contains the best combination of n_neighbors and min_dist.
-    - best_score: float, best silhouette score achieved.
-    """
-    
-    best_score = -1  # Initialize with a low value
-    best_params = None
-
-    # Standardize the selected features
-    scaler = StandardScaler()
-    scaled_data = scaler.fit_transform(dataframe[features])
-
-    # Sample the data to reduce computation time
-    sample_data, _ = train_test_split(scaled_data, train_size=sampling_fraction, random_state=random_state)
-
-    # Precompute distance matrix (optional for optimization)
-    distance_matrix_data = distance_matrix(sample_data, sample_data)
-
-    # Iterate over each combination of n_neighbors and min_dist
-    for n_neighbors in n_neighbors_list:
-        for min_dist in min_dist_list:
-            print(f"Testing n_neighbors={n_neighbors}, min_dist={min_dist}")
-            
-            # Perform UMAP dimensionality reduction with optimizations
-            umap_reducer = umap.UMAP(n_neighbors=n_neighbors,
-                                     min_dist=min_dist, 
-                                     n_components=2, 
-                                     random_state=random_state,
-                                     init='spectral',  # Use spectral initialization for faster convergence
-                                     metric='precomputed',  # Use precomputed distance matrix
-                                     n_epochs=50,  # Further reduce number of epochs
-                                     low_memory=True,  # Reduce memory usage
-                                     target_n_neighbors=5,  # Optimize embedding by reducing target neighbors
-                                     transform_seed=random_state,  # Ensure transform reproducibility
-                                     verbose=True)  # Display progress during the UMAP fitting
-            
-            umap_data = umap_reducer.fit_transform(distance_matrix_data)
-
-            # Apply KMeans clustering on the UMAP-reduced data
-            kmeans = KMeans(n_clusters=n_clusters, random_state=random_state)
-            cluster_labels = kmeans.fit_predict(umap_data)
-
-            # Calculate silhouette score to evaluate the quality of clustering
-            score = silhouette_score(umap_data, cluster_labels)
-
-            print(f"Silhouette Score: {score:.4f}")
-
-            # Update best score and parameters if current score is better
-            if score > best_score:
-                best_score = score
-                best_params = {'n_neighbors': n_neighbors, 'min_dist': min_dist}
-
-    print(f"Best Parameters: {best_params}, Best Silhouette Score: {best_score:.4f}")
-    
-    return best_params, best_score
-
-# Example usage:
-n_neighbors_list = [10, 30, 50]  # List of n_neighbors values to try
-min_dist_list = [0.1, 0.3, 0.5]  # List of min_dist values to try
-
-best_params, best_score = find_best_umap_params(ldos_pks_df, 
-                                                features=['X', 'Y', 'bias_mV', 'peak_heights', 'peak_widths', 'peak_prominences'],
-                                                n_neighbors_list=n_neighbors_list, 
-                                                min_dist_list=min_dist_list)
-# -
-
-ldos_pks_df
-
-# +
-from sklearn.metrics import silhouette_score
-import numpy as np
-import umap
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
-from sklearn.model_selection import train_test_split
-from scipy.spatial import distance_matrix
-
-
-def find_best_umap_params(dataframe, features, n_neighbors_list, min_dist_list, n_clusters=4, random_state=21, sampling_fraction=0.1):
-    """
-    Function to find the best combination of n_neighbors and min_dist using silhouette score.
-
-    Parameters:
-    - dataframe: pd.DataFrame, input dataframe with features.
-    - features: list, list of features to use for standardization and UMAP.
-    - n_neighbors_list: list, list of values for n_neighbors to test.
-    - min_dist_list: list, list of values for min_dist to test.
-    - n_clusters: int, number of clusters for KMeans clustering (default is 4).
-    - random_state: int, random seed for reproducibility (default is 21).
-    - sampling_fraction: float, fraction of data to sample for faster fitting (default is 0.1).
-
-    Returns:
-    - best_params: dict, contains the best combination of n_neighbors and min_dist.
-    - best_score: float, best silhouette score achieved.
-    """
-    
-    best_score = -1  # Initialize with a low value
-    best_params = None
-
-    # Standardize the selected features
-    scaler = StandardScaler()
-    scaled_data = scaler.fit_transform(dataframe[features])
-
-    # Sample the data to reduce computation time
-    sample_data, _ = train_test_split(scaled_data, train_size=sampling_fraction, random_state=random_state)
-
-    # Precompute distance matrix (optional for optimization)
-    distance_matrix_data = distance_matrix(sample_data, sample_data)
-
-    # Iterate over each combination of n_neighbors and min_dist
-    for n_neighbors in n_neighbors_list:
-        for min_dist in min_dist_list:
-            print(f"Testing n_neighbors={n_neighbors}, min_dist={min_dist}")
-            
-            # Perform UMAP dimensionality reduction with verbose=True to display progress
-            umap_reducer = umap.UMAP(n_neighbors=n_neighbors,
-                                     min_dist=min_dist, 
-                                     n_components=2, 
-                                     random_state=random_state,
-                                     init='spectral',  # Use spectral initialization for faster convergence
-                                     metric='precomputed',  # Use precomputed distance matrix
-                                     n_epochs=100,  # Reduce number of epochs
-                                     verbose=True)  # Display progress during the UMAP fitting
-            
-            umap_data = umap_reducer.fit_transform(distance_matrix_data)
-
-            # Apply KMeans clustering on the UMAP-reduced data
-            kmeans = KMeans(n_clusters=n_clusters, random_state=random_state)
-            cluster_labels = kmeans.fit_predict(umap_data)
-
-            # Calculate silhouette score to evaluate the quality of clustering
-            score = silhouette_score(umap_data, cluster_labels)
-
-            print(f"Silhouette Score: {score:.4f}")
-
-            # Update best score and parameters if current score is better
-            if score > best_score:
-                best_score = score
-                best_params = {'n_neighbors': n_neighbors, 'min_dist': min_dist}
-
-    print(f"Best Parameters: {best_params}, Best Silhouette Score: {best_score:.4f}")
-    
-    return best_params, best_score
-
-# Example usage:
-n_neighbors_list = [10, 30, 50]  # List of n_neighbors values to try
-min_dist_list = [0.1, 0.3, 0.5]  # List of min_dist values to try
-
-best_params, best_score = find_best_umap_params(ldos_pks_df, 
-                                                features=['X', 'Y', 'bias_mV', 'peak_heights', 'peak_widths', 'peak_prominences'],
-                                                n_neighbors_list=n_neighbors_list, 
-                                                min_dist_list=min_dist_list)
-# -
-
-
-
-
-
-
-
-
-
-
-# # Selections with BBOX & Lasso for (grid_LDOS)
-
-# ## Select bounding box with holoview 
-#  
-
-
-
-
-
-# +
-def bbox_select_plot(xr_data, ch_name='LDOS', number_of_bbox=3, frame_width=400):
-    """
-    A function to interactively select bounding boxes on an LDOS map and plot the 
-    average LDOS curve for each selected region.
-
-    Parameters:
-    -----------
-    xr_data : xarray.Dataset
-        The dataset containing the LDOS data. It must have 'X', 'Y', and 'bias_mV' dimensions.
-    
-    ch_name : str, optional
-        The channel name to plot and analyze. Default is 'LDOS'.
-    
-    number_of_bbox : int, optional
-        The number of bounding boxes to select before stopping. Default is 3.
-    
-    frame_width : int, optional
-        The width of the frame for the holoviews plot. Default is 400.
-
-    Returns:
-    --------
-    bbox_list : list of tuples
-        A list of bounding box coordinates selected by the user.
-    """
-
-    # Import required libraries within the function
-    import holoviews as hv
-    from holoviews import streams
-    import seaborn as sns
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from IPython.display import display
-
-    # Activate Holoviews bokeh extension
-    hv.extension('bokeh')
-
-    # Prepare the dataset for holoviews
-    xr_data_channel_hv = hv.Dataset(xr_data[ch_name])
-    dmap_plane = ["X", "Y"]  # Dimensions to plot for the map (X-Y plane)
-
-    # Create a DynamicMap to visualize the LDOS in X-Y plane
-    dmap = xr_data_channel_hv.to(hv.Image, kdims=dmap_plane, dynamic=True)
-    dmap.opts(colorbar=True, cmap='bwr', frame_width=frame_width, aspect='equal')
-
-    # Initialize a list to store bounding box coordinates
-    bbox_list = []
-
-    # Prepare an image for bounding box selection at bias_mV = 0
-    xr_data_channel_hv_image = hv.Dataset(xr_data[ch_name].isel(bias_mV=0)).relabel('for BBox selection : ')
-    
-    # Create a holoviews Points object with box select tool
-    bbox_points = hv.Points(xr_data_channel_hv_image).opts(
-        frame_width=frame_width, color='k', aspect='equal', alpha=0.1, tools=['box_select']
-    )
-
-    # Initialize the stream for capturing bounding box coordinates
-    bound_box = streams.BoundsXY(source=bbox_points, bounds=(0, 0, 0, 0))
-
-    def extract_bbox_data(bbox, xr_data, ch_name):
-        """
-        Extract the average LDOS data from a bounding box region.
-        
-        Parameters:
-        -----------
-        bbox : tuple
-            A tuple of four values representing the (x0, y0, x1, y1) bounding box coordinates.
-        
-        xr_data : xarray.Dataset
-            The dataset containing the LDOS data.
-        
-        ch_name : str
-            The name of the channel to extract the data from.
-        
-        Returns:
-        --------
-        avg_data : numpy.ndarray
-            The average LDOS data over the bounding box region.
-        """
-        # Extract X and Y coordinates for the bounding box
-        (x0, y0, x1, y1) = bbox
-        # Subset the dataset to the bounding box region
-        subset = xr_data.sel(X=slice(x0, x1), Y=slice(y0, y1))
-        # Compute the mean LDOS over the selected X and Y region
-        avg_data = subset[ch_name].mean(dim=['X', 'Y']).values
-        return avg_data
-
-    def bbox_callback(event):
-        """
-        Callback function that gets triggered when a bounding box is selected.
-        
-        It stores the bounding box coordinates and plots the average LDOS curve 
-        for each bounding box.
-        """
-        # Store the selected bounding box
-        bbox_list.append(bound_box.bounds)
-
-        # Extract the average LDOS data for the selected bounding box
-        avg_data = extract_bbox_data(bound_box.bounds, xr_data, ch_name)
-
-        # Plot the average LDOS curve using seaborn
-        sns.lineplot(x=xr_data['bias_mV'], y=avg_data, label=f'Bounding Box {len(bbox_list)}')
-        # Add shaded region for standard deviation
-        plt.fill_between(xr_data['bias_mV'], avg_data - np.std(avg_data), avg_data + np.std(avg_data), alpha=0.3)
-
-        # If the number of selected boxes reaches the limit, stop the stream
-        if len(bbox_list) >= number_of_bbox:
-            plt.xlabel('Bias (mV)')
-            plt.ylabel('Average LDOS')
-            plt.legend()
-            plt.title('Average LDOS across selected bounding boxes')
-            plt.show()
-            return hv.streams.Streaming.stop()  # Stop after the set number of boxes is reached
-
-    # Register the callback function to be triggered when a bounding box is selected
-    bound_box.param.watch(bbox_callback, 'bounds')
-
-    # Display the dynamic map and points for bounding box selection
-    display(dmap * bbox_points)
-
-    return bbox_list  # Return the list of selected bounding boxes
-
-# Example usage:
-# bbox_list = bbox_select_plot(grid_LDOS, ch_name='LDOS', number_of_bbox=3)
-
-
-
-# -
-
-bbox_list = bbox_select_plot(grid_LDOS, ch_name='LDOS', number_of_bbox=4)
-
-bbox_list 
-
-
-
-
-
-hv_bias_mV_slicing_with_bbox(grid_LDOS, frame_width=400, bbox_list=bbox_list)
-
-# +
-import seaborn as sns
-import matplotlib.pyplot as plt
-import xarray as xr
-
-def plot_ldos_within_bbox(xr_data, bbox_list=[], ch='LDOS', bbox_color_palette=None):
-    '''
-    input : xarray dataset, list of bounding boxes
-    output : line plot of LDOS values within each bounding box using sns.lineplot with error bars,
-             returns list of datasets with full X, Y, bias_mV dimensions for each bbox
-    
-    * Extracts full X, Y, bias_mV data within the bounding boxes and plots the LDOS with error bars.
-    * Saves the extracted datasets for each bounding box in a list.
-    
-    Parameters:
-    - xr_data : xarray.Dataset
-        The input dataset containing the LDOS data.
-    - bbox_list : list of tuples
-        A list of bounding boxes, where each box is represented as (x0, y0, x1, y1).
-    - ch : str, optional
-        The channel to be visualized. Default is 'LDOS'.
-    - bbox_color_palette : list, optional
-        A list of colors to use for the line plots. Defaults to seaborn's color palette.
-    
-    Returns:
-    - list of xarray.Dataset
-        A list of datasets containing the full X, Y, bias_mV dimensions for each bounding box.
-    '''
-    # Set default color palette if none is provided
-    if bbox_color_palette is None:
-        bbox_color_palette = sns.color_palette(n_colors=len(bbox_list))
-
-    # List to store the full LDOS datasets for each bounding box
-    bbox_ldos_datasets = []
-
-    plt.figure(figsize=(6, 4))  # Adjusted figure size
-
-    # Create a plot for each bounding box
-    for i, (bbox, color) in enumerate(zip(bbox_list, bbox_color_palette)):
-        x0, y0, x1, y1 = bbox
-        
-        # Select the LDOS data within the bounding box (full X, Y, bias_mV dimensions)
-        ldos_bbox = xr_data[ch].sel(X=slice(x0, x1), Y=slice(y0, y1))
-
-        # Add the full dataset to the list
-        bbox_ldos_datasets.append(ldos_bbox)
-
-        # Convert the full dataset to a DataFrame for seaborn plotting
-        df = ldos_bbox.to_dataframe().reset_index()
-
-        # Plotting with sns.lineplot directly using the full data, errorbar computed by seaborn
-        sns.lineplot(x='bias_mV', y=ch, data=df, color=color, label=f"BBox {i+1}", errorbar='sd')
-
-    plt.title("LDOS within Bounding Boxes with Error Bars", fontsize='large')
-    plt.xlabel("Bias (mV)", fontsize='large')
-    plt.ylabel("LDOS", fontsize='large')
-    plt.legend()
-    plt.show()
-
-    return bbox_ldos_datasets
-
-# Example usage
-# bbox_list = [(-2.027e-07, -9.38e-08, -1.745e-07, -6.02e-08), (-1.272e-07, -4.94e-08, -9.54e-08, -2.21e-08)]
-# ldos_datasets = plot_ldos_within_bbox(grid_LDOS, bbox_list=bbox_list)
-
-
-
-# +
-
-ldos_list = plot_ldos_within_bbox(grid_LDOS, bbox_list=bbox_list)
-# -
-
-ldos_list[0]
-
-
-
-# ## Select lasso  with holoview 
-#
-
-# #### single area selection 
-
-
-# +
-import xarray as xr
-import holoviews as hv
-from holoviews import streams
-import numpy as np
-import matplotlib.pyplot as plt
-
-hv.extension('bokeh')
-
-# Function to create a masked xarray based on selected points
-def create_masked_xarray(points, selection_stream, original_dataset):
-    # Get the selected indices
-    selected_indices = selection_stream.index
-    if len(selected_indices) > 0:
-        # Get the shape of the original data
-        data_shape = original_dataset.LDOS.isel(bias_mV=0).shape
-        
-        # Convert 1D indices to 2D (y, x) coordinates
-        selected_points_2d = np.unravel_index(selected_indices, data_shape)
-        
-        # Create a mask with the same shape as the original data
-        mask = np.zeros(data_shape, dtype=bool)
-        
-        # Set the mask values to True at the selected coordinates
-        mask[selected_points_2d] = True
-        
-        # Create a masked xarray.Dataset
-        masked_data = original_dataset.LDOS.isel(bias_mV=0).where(mask, drop=False)
-        
-        # Return the masked dataset and the mask
-        return xr.Dataset({'LDOS_masked': masked_data}), mask
-    else:
-        return xr.Dataset(), None
-
-# Function to create the interactive plot with lasso/box selection
-def create_interactive_plot_with_mask(dataset):
-    grid_channel_hv = hv.Dataset(dataset.LDOS)
-    grid_channel_hv_image = hv.Dataset(dataset.LDOS.isel(bias_mV=0))
-    
-    dmap = grid_channel_hv.to(hv.Image, kdims=["X", "Y"], dynamic=True).opts(
-        colorbar=True, cmap='bwr', frame_width=400, aspect='equal', title='XY plane slicing:'
-    ).opt()
-    
-    points = hv.Points(grid_channel_hv_image).opts(
-        frame_width=400, aspect='equal', alpha=0.2, tools=['box_select', 'lasso_select']
-    )
-    
-    selection = streams.Selection1D(source=points)
-
-    # Highlight the selected points dynamically
-    def highlight_selected_area(index):
-        selected_points = points.iloc[index]
-        if len(selected_points) > 0:
-            return hv.Points(selected_points).opts(color='lime', size=10, line_color='black', alpha=0.2)
-        return hv.Points([])
-
-    dynamic_selected_points = hv.DynamicMap(lambda index: highlight_selected_area(selection.index), streams=[selection])
-    
-    # Overlay the image, points, and dynamic selection
-    overlay = dmap * points * dynamic_selected_points
-    
-    return overlay, selection
-
-# Function to save the selected area as a masked xarray and visualize the mask
-def save_selected_area_as_xarray(dataset, selection_stream):
-    # Create the masked dataset and mask
-    masked_dataset, mask = create_masked_xarray(hv.Points(dataset.LDOS.isel(bias_mV=0)), selection_stream, dataset)
-    
-    # Visualize the mask if it exists
-    if mask is not None:
-        plt.figure(figsize=(6,6))
-        plt.imshow(mask, cmap='gray')
-        plt.title("Selected Area Mask")
-        plt.colorbar(label='Selected (True) / Not Selected (False)')
-        plt.show()
-
-    # Return the masked dataset
-    return masked_dataset
-
-
-# Step 1: Create the interactive plot for selecting areas
-#interactive_plot, selection_stream = create_interactive_plot_with_mask(grid_LDOS)
-
-# Display the interactive plot (in Jupyter Notebook, for example)
-#interactive_plot
-
-# Step 2: Save the selected area after making a selection
-#selected_area_xarray = save_selected_area_as_xarray(grid_LDOS, selection_stream)
-
-# Print the resulting masked xarray dataset
-#print(selected_area_xarray)
-
-# +
-# Step 1: Create the interactive plot for selecting area
-interactive_plot, selection_stream = create_interactive_plot_with_mask(grid_LDOS)
-
-# Display the interactive plot (in Jupyter Notebook, for example)
-interactive_plot
-# -
-
-# Step 2: Save the selected area after making a selection
-selected_area_xarray = save_selected_area_as_xarray(grid_LDOS, selection_stream)
-## XY is changed.. Y=X symmetric.... 
-## (Y,X)  <==> (X,Y)
-# Print the resulting masked xarray dataset
-print(selected_area_xarray)
-
-
-
-# ## Multiple area selection  (Ta rich )
-
-
-
-
-
-
-# #### n_components=3 
-#
-
-# +
-import os
-import multiprocessing
-
-# This block checks the number of CPU cores available on the system and sets the environment variable 
-# OMP_NUM_THREADS accordingly, which controls the number of threads for parallel operations.
-# If you want to include logical cores (hyper-threading), you can use os.cpu_count().
-# Get the total number of cores (both physical and logical if applicable)
-num_cores = multiprocessing.cpu_count()
-print('num_cores: ', num_cores)
-
-# Set the number of threads for parallel operations to the total number of cores.
-# You can adjust this value based on your experiments.
-os.environ["OMP_NUM_THREADS"] = str(num_cores)
-
-# Perform tasks such as KMeans clustering
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
-
-
-# +
-## update clustering with DBSCAN to consider spatial distance between peaks
-# -
-
-
-
-# +
-from sklearn.cluster import DBSCAN
-import numpy as np
-
-# X, Y와 피크 특성 간 거리를 결합한 커스텀 거리 계산 함수
-def custom_distance(a, b):
-    spatial_dist = np.linalg.norm(a[:2] - b[:2])  # X, Y 좌표 거리
-    feature_dist = np.linalg.norm(a[2:] - b[2:])  # 피크 특성 거리
-    return spatial_dist + feature_dist  # 두 거리를 결합
-
-# DBSCAN을 커스텀 거리로 적용
-clustering = DBSCAN(metric=custom_distance, eps=0.5, min_samples=5)
-df['cluster'] = clustering.fit_predict(features)
-
-# -
-
-df = grid_LDOS_pks_df.copy()
-
-# +
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
-import plotly.graph_objects as go
-
-# Explicitly copy a slice of the DataFrame where peak_prominences are greater than 1E-12 and peak_heights are positive
-df = grid_LDOS_pks_df[(grid_LDOS_pks_df.peak_prominences > 1E-12) & (grid_LDOS_pks_df.peak_heights > 0)].copy()
-
-# Selecting relevant features for PCA analysis
-features = df[['bias_mV', 'peak_heights', 'peak_prominences', 'peak_widths']].values
-
-# Perform Principal Component Analysis (PCA) and reduce the dimensionality to 3 components
-pca = PCA(n_components=3)
-pca_result = pca.fit_transform(features)
-
-# Add the PCA results as new columns to the DataFrame
-df['PCA1'] = pca_result[:, 0]
-df['PCA2'] = pca_result[:, 1]
-df['PCA3'] = pca_result[:, 2]
-
-# Perform KMeans clustering on the PCA results, dividing the data into 7 clusters
-num_clusters = 7
-kmeans = KMeans(n_clusters=num_clusters, n_init=10)
-df['cluster'] = kmeans.fit_predict(pca_result)
-
-# Create a 3D scatter plot using Plotly for interactive visualization
-fig = go.Figure()
-
-# Define a mapping between cluster numbers and marker symbols for better visualization
-marker_symbols = ['circle', 'circle-open', 'cross', 'diamond', 'diamond-open', 'square', 'square-open', 'x']
-cluster_to_symbol = {i: marker_symbols[i % len(marker_symbols)] for i in range(num_clusters)}
-
-# Add a trace to the plot for each cluster, assigning unique marker symbols and colors to each cluster
-for cluster in range(num_clusters):
-    cluster_data = df[df['cluster'] == cluster]
-    fig.add_trace(go.Scatter3d(
-        x=cluster_data['X'],  # X-axis data
-        y=cluster_data['Y'],  # Y-axis data
-        z=cluster_data['bias_mV'],  # Z-axis data
-        mode='markers',
-        marker=dict(size=cluster_data.peak_widths * 50,  # Adjust marker size based on peak_widths
-                    color=cluster_data.peak_heights,  # Color markers based on peak_heights
-                    symbol=cluster_to_symbol[cluster],  # Assign cluster-specific marker symbol
-                    opacity=0.8),  # Set marker opacity
-        name=f'Cluster {cluster}'  # Add cluster name to the plot legend
-    ))
-
-# Set layout options for the plot
-fig.update_layout(
-    scene=dict(
-        xaxis=dict(title='X-axis'),  # X-axis label
-        yaxis=dict(title='Y-axis'),  # Y-axis label
-        zaxis=dict(title='bias_mV'),  # Z-axis label
-    ),
-    title='3D Scatter Plot with Clustering',  # Plot title
-    margin=dict(l=10, r=10, b=10, t=10),  # Set plot margins
-    width=600,  # Width of the plot
-    height=600  # Height of the plot
-)
-
-# Show the interactive 3D plot
-fig.show()
-
-# Create a copy of the DataFrame for further use
-df_0 = df.copy()
-
-# -
-
-
-# #### Use elbow model for efficient calculation 
-
-# +
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
-import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-
-# Explicitly copy a slice of the DataFrame where peak_prominences are greater than 1E-12 and peak_heights are positive
-df = grid_LDOS_pks_df[(grid_LDOS_pks_df.peak_prominences > 1E-12) & (grid_LDOS_pks_df.peak_heights > 0)].copy()
-
-# Selecting relevant features for PCA analysis
-features = df[['bias_mV', 'peak_heights', 'peak_prominences', 'peak_widths']].values
-
-# Perform Principal Component Analysis (PCA) and reduce the dimensionality to 3 components
-pca = PCA(n_components=3)
-pca_result = pca.fit_transform(features)
-
-# Add the PCA results as new columns to the DataFrame
-df['PCA1'] = pca_result[:, 0]
-df['PCA2'] = pca_result[:, 1]
-df['PCA3'] = pca_result[:, 2]
-
-# Elbow Method to find the optimal number of clusters
-inertia = []
-cluster_range = range(1, 11)  # Test with cluster numbers from 1 to 10
-for k in cluster_range:
-    kmeans = KMeans(n_clusters=k, n_init=10, random_state=0)
-    kmeans.fit(pca_result)
-    inertia.append(kmeans.inertia_)
-
-# Plot the Elbow curve
-plt.figure(figsize=(8, 5))
-plt.plot(cluster_range, inertia, 'bo-', markersize=8)
-plt.xlabel('Number of clusters')
-plt.ylabel('Inertia (within-cluster sum of squares)')
-plt.title('Elbow Method to Determine Optimal Number of Clusters')
-plt.grid(True)
-plt.show()
-
-# Perform KMeans clustering with the optimal number of clusters
-# Here, assume that 7 clusters were found to be optimal based on the elbow plot.
-num_clusters = 7
-kmeans = KMeans(n_clusters=num_clusters, n_init=10)
-df['cluster'] = kmeans.fit_predict(pca_result)
-
-# Create a 3D scatter plot using Plotly for interactive visualization
-fig = go.Figure()
-
-# Define a mapping between cluster numbers and marker symbols for better visualization
-marker_symbols = ['circle', 'circle-open', 'cross', 'diamond', 'diamond-open', 'square', 'square-open', 'x']
-cluster_to_symbol = {i: marker_symbols[i % len(marker_symbols)] for i in range(num_clusters)}
-
-# Add a trace to the plot for each cluster, assigning unique marker symbols and colors to each cluster
-for cluster in range(num_clusters):
-    cluster_data = df[df['cluster'] == cluster]
-    fig.add_trace(go.Scatter3d(
-        x=cluster_data['X'],  # X-axis data
-        y=cluster_data['Y'],  # Y-axis data
-        z=cluster_data['bias_mV'],  # Z-axis data
-        mode='markers',
-        marker=dict(size=cluster_data.peak_widths * 50,  # Adjust marker size based on peak_widths
-                    color=cluster_data.peak_heights,  # Color markers based on peak_heights
-                    symbol=cluster_to_symbol[cluster],  # Assign cluster-specific marker symbol
-                    opacity=0.8),  # Set marker opacity
-        name=f'Cluster {cluster}'  # Add cluster name to the plot legend
-    ))
-
-# Set layout options for the plot
-fig.update_layout(
-    scene=dict(
-        xaxis=dict(title='X-axis'),  # X-axis label
-        yaxis=dict(title='Y-axis'),  # Y-axis label
-        zaxis=dict(title='bias_mV'),  # Z-axis label
-    ),
-    title='3D Scatter Plot with Clustering',  # Plot title
-    margin=dict(l=10, r=10, b=10, t=10),  # Set plot margins
-    width=600,  # Width of the plot
-    height=600  # Height of the plot
-)
-
-# Show the interactive 3D plot
-fig.show()
-
-# Create a copy of the DataFrame for further use
-df_0 = df.copy()
-# -
-
-
-# ### Use the Silhouette Analysis for better clustering quality 
-#
-
-# +
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
-import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-
-# Explicitly copy a slice of the DataFrame where peak_prominences are greater than 1E-12 and peak_heights are positive
-df = grid_LDOS_pks_df[(grid_LDOS_pks_df.peak_prominences > 1E-12) & (grid_LDOS_pks_df.peak_heights > 0)].copy()
-
-# Selecting relevant features for PCA analysis
-features = df[['bias_mV', 'peak_heights', 'peak_prominences', 'peak_widths']].values
-
-# Perform Principal Component Analysis (PCA) and reduce the dimensionality to 3 components
-pca = PCA(n_components=3)
-pca_result = pca.fit_transform(features)
-
-# Add the PCA results as new columns to the DataFrame
-df['PCA1'] = pca_result[:, 0]
-df['PCA2'] = pca_result[:, 1]
-df['PCA3'] = pca_result[:, 2]
-
-# Silhouette Analysis to find the optimal number of clusters
-silhouette_scores = []
-cluster_range = range(2, 11)  # Test with cluster numbers from 2 to 10 (min 2 clusters required for silhouette score)
-for k in cluster_range:
-    kmeans = KMeans(n_clusters=k, n_init=10, random_state=0)
-    cluster_labels = kmeans.fit_predict(pca_result)
-    silhouette_avg = silhouette_score(pca_result, cluster_labels)
-    silhouette_scores.append(silhouette_avg)
-
-# Plot the silhouette scores to visualize the best number of clusters
-plt.figure(figsize=(8, 5))
-plt.plot(cluster_range, silhouette_scores, 'bo-', markersize=8)
-plt.xlabel('Number of clusters')
-plt.ylabel('Silhouette Score')
-plt.title('Silhouette Analysis to Determine Optimal Number of Clusters')
-plt.grid(True)
-plt.show()
-
-# Use the number of clusters with the highest silhouette score
-optimal_clusters = cluster_range[silhouette_scores.index(max(silhouette_scores))]
-print(f"Optimal number of clusters based on silhouette score: {optimal_clusters}")
-
-# Perform KMeans clustering with the optimal number of clusters
-kmeans = KMeans(n_clusters=optimal_clusters, n_init=10)
-df['cluster'] = kmeans.fit_predict(pca_result)
-
-# Create a 3D scatter plot using Plotly for interactive visualization
-fig = go.Figure()
-
-# Define a mapping between cluster numbers and marker symbols for better visualization
-marker_symbols = ['circle', 'circle-open', 'cross', 'diamond', 'diamond-open', 'square', 'square-open', 'x']
-cluster_to_symbol = {i: marker_symbols[i % len(marker_symbols)] for i in range(optimal_clusters)}
-
-# Add a trace to the plot for each cluster, assigning unique marker symbols and colors to each cluster
-for cluster in range(optimal_clusters):
-    cluster_data = df[df['cluster'] == cluster]
-    fig.add_trace(go.Scatter3d(
-        x=cluster_data['X'],  # X-axis data
-        y=cluster_data['Y'],  # Y-axis data
-        z=cluster_data['bias_mV'],  # Z-axis data
-        mode='markers',
-        marker=dict(size=cluster_data.peak_widths * 50,  # Adjust marker size based on peak_widths
-                    color=cluster_data.peak_heights,  # Color markers based on peak_heights
-                    symbol=cluster_to_symbol[cluster],  # Assign cluster-specific marker symbol
-                    opacity=0.8),  # Set marker opacity
-        name=f'Cluster {cluster}'  # Add cluster name to the plot legend
-    ))
-
-# Set layout options for the plot
-fig.update_layout(
-    scene=dict(
-        xaxis=dict(title='X-axis'),  # X-axis label
-        yaxis=dict(title='Y-axis'),  # Y-axis label
-        zaxis=dict(title='bias_mV'),  # Z-axis label
-    ),
-    title='3D Scatter Plot with Clustering',  # Plot title
-    margin=dict(l=10, r=10, b=10, t=10),  # Set plot margins
-    width=600,  # Width of the plot
-    height=600  # Height of the plot
-)
-
-# Show the interactive 3D plot
-fig.show()
-
-# Create a copy of the DataFrame for further use
-df_0 = df.copy()
-
-# -
-
-
-
-# Define the min and max bias_mV range
-min_val = -2.0
-max_val = 2.0
-# Filter the dataframe based on the bias_mV range
-filtered_df = df[(grid_LDOS_pks_df.bias_mV < max_val) & (grid_LDOS_pks_df.bias_mV > min_val)]
-# Create a figure
-fig, ax = plt.subplots(figsize = (4,3))
-# Plot the histogram
-filtered_df.cluster.hist(bins=9, ax=ax)
-# Set the title with dynamic min and max values
-ax.set_title(f'Cluster Histogram {min_val}<bias_mV<{max_val}')
-ax.set_xlabel('Cluster')
-ax.set_ylabel('Frequency')
-plt.show()
-
-# +
-## new scatter with selective clusters 
-# +
-import seaborn as sns
-import matplotlib.pyplot as plt
-from matplotlib.colors import Normalize
-import matplotlib.markers as mmarkers
-
-
-# peak_prominences의 최소값과 최대값 계산
-min_prominence = df['peak_prominences'].min()
-max_prominence = df['peak_prominences'].max()
-
-# peak_widths의 최소값과 최대값 계산
-min_width = df['peak_widths'].min()
-max_width = df['peak_widths'].max()
-
-# Normalize 객체 생성
-norm_color = Normalize(vmin=min_prominence, vmax=max_prominence)
-norm_size = Normalize(vmin=min_width, vmax=max_width)
-
-# Define a mapping from cluster number to marker symbol
-marker_symbols = ['o', 'o', '+', 'D', 'd', 's', '8', 'x']
-num_clusters = df['cluster'].nunique()
-cluster_to_symbol = {i: marker_symbols[i % len(marker_symbols)] for i in range(num_clusters)}
-
-# scatterplot 그리기
-def scatter_with_colorbar(x, y, peak_prominences, peak_widths, cluster, **kwargs):
-    ax = plt.gca()
-    sizes = norm_size(peak_widths) * 300  # 크기 조절 (300은 최대 크기, 필요에 따라 조정)
-    marker = cluster_to_symbol[cluster.iloc[0]]  # 각 subplot은 하나의 cluster만 포함하므로 첫 번째 값 사용
-    scatter = ax.scatter(x, y, c=peak_prominences, s=sizes, norm=norm_color, cmap='viridis', marker=marker, alpha =0.2)
-    ax.grid('on')
-    return scatter
-
-
-# FacetGrid 생성 및 scatterplot 그리기
-g = sns.FacetGrid(data=df, col='cluster', height=3, col_wrap=4)
-g.map(scatter_with_colorbar, 'bias_mV', 'peak_heights', 'peak_prominences', 'peak_widths', 'cluster')
-g.set_titles(col_template='Cluster {col_name}')
-
-# 그래프의 레이아웃 조정
-plt.tight_layout()
-
-# 컬러바와 범례를 위한 공간 확보
-g.fig.subplots_adjust(bottom=0.2, right=0.85)
-
-# 컬러바 추가 (가로 방향)
-cbar_ax = g.fig.add_axes([0.10, 0.05, 0.50, 0.02])  # [left, bottom, width, height]
-cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm_color, cmap='viridis'), 
-                    cax=cbar_ax, orientation='horizontal', label='Peak Prominences')
-
-# 마커 심볼에 대한 범례 추가 (가로 방향)
-legend_elements = [plt.Line2D([0], [0], marker=marker, color='w', label=f'Cluster {cluster}',
-                              markerfacecolor='gray', markersize=10)
-                   for cluster, marker in cluster_to_symbol.items()]
-
-# 범례를 위한 새로운 axes 생성
-legend_ax = g.fig.add_axes([0.64, -0.08, 0.20, 0.02])  # [left, bottom, width, height]
-legend_ax.axis('off')  # 축 숨기기
-
-# 범례 추가
-legend = legend_ax.legend(handles=legend_elements, loc='center', ncol=2, mode='expand', 
-                          borderaxespad=0., title='Cluster Markers')
-legend._loc = 3  # 범례 위치 조정 (하단 가운데)
-
-plt.show()
-
-# +
-# in case of peak_prominence y axis, height colorbar 
-import seaborn as sns
-import matplotlib.pyplot as plt
-from matplotlib.colors import Normalize
-import matplotlib.markers as mmarkers
-
-
-# peak_prominences의 최소값과 최대값 계산
-min_prominence = df['peak_prominences'].min()
-max_prominence = df['peak_prominences'].max()
-
-# peak_height의 최소값과 최대값 계산
-min_height = df['peak_heights'].min()
-max_height = df['peak_heights'].max()
-
-
-# peak_widths의 최소값과 최대값 계산
-min_width = df['peak_widths'].min()
-max_width = df['peak_widths'].max()
-
-# Normalize 객체 생성
-#norm_color = Normalize(vmin=min_prominence, vmax=max_prominence)
-norm_color = Normalize(vmin=min_height, vmax=max_height)
-norm_size = Normalize(vmin=min_width, vmax=max_width)
-
-# Define a mapping from cluster number to marker symbol
-marker_symbols = ['o', 'o', '+', 'D', 'd', 's', '8', 'x']
-num_clusters = df['cluster'].nunique()
-cluster_to_symbol = {i: marker_symbols[i % len(marker_symbols)] for i in range(num_clusters)}
-
-# scatterplot 그리기
-def scatter_with_colorbar(x, y, peak_heights, peak_widths, cluster, **kwargs):
-    ax = plt.gca()
-    sizes = norm_size(peak_widths) * 300  # 크기 조절 (300은 최대 크기, 필요에 따라 조정)
-    marker = cluster_to_symbol[cluster.iloc[0]]  # 각 subplot은 하나의 cluster만 포함하므로 첫 번째 값 사용
-    scatter = ax.scatter(x, y, c=peak_heights, s=sizes, norm=norm_color, cmap='viridis', marker=marker, alpha =0.1)
-    ax.grid('on')
-    return scatter
-
-
-# FacetGrid 생성 및 scatterplot 그리기
-g = sns.FacetGrid(data=df, col='cluster', height=3, col_wrap=4)
-g.map(scatter_with_colorbar, 'bias_mV', 'peak_prominences', 'peak_heights','peak_widths', 'cluster')
-g.set_titles(col_template='Cluster {col_name}')
-
-# 그래프의 레이아웃 조정
-plt.tight_layout()
-
-# 컬러바와 범례를 위한 공간 확보
-g.fig.subplots_adjust(bottom=0.2, right=0.85)
-
-# 컬러바 추가 (가로 방향)
-cbar_ax = g.fig.add_axes([0.10, 0.05, 0.50, 0.02])  # [left, bottom, width, height]
-cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm_color, cmap='viridis'), 
-                    cax=cbar_ax, orientation='horizontal', label='Peak heights')
-
-# 마커 심볼에 대한 범례 추가 (가로 방향)
-legend_elements = [plt.Line2D([0], [0], marker=marker, color='w', label=f'Cluster {cluster}',
-                              markerfacecolor='gray', markersize=10)
-                   for cluster, marker in cluster_to_symbol.items()]
-
-# 범례를 위한 새로운 axes 생성
-legend_ax = g.fig.add_axes([0.64, -0.08, 0.20, 0.02])  # [left, bottom, width, height]
-legend_ax.axis('off')  # 축 숨기기
-
-# 범례 추가
-legend = legend_ax.legend(handles=legend_elements, loc='center', ncol=2, mode='expand', 
-                          borderaxespad=0., title='Cluster Markers')
-legend._loc = 3  # 범례 위치 조정 (하단 가운데)
-
-plt.show()
-
-
-# +
-#selected_clusters = [3,4]
-#selected_clusters = [2]
-selected_clusters = [1,2,3,4,5]
-# Create 3D scatter plot
-
-fig = go.Figure()
-filtered_peak_heights_df = filtered_df[filtered_df.peak_prominences > 1E-13][filtered_df.peak_heights > 1E-12]
-#filtered_peak_heights_df
-filtered_scatter_plot_df = filtered_peak_heights_df.copy()
-# Add traces for each cluster
-
-# Define a mapping from cluster number to marker symbol
-marker_symbols = ['circle', 'circle-open', 'cross', 'diamond',
-            'diamond-open', 'square', 'square-open', 'x']
-cluster_to_symbol = {i: marker_symbols[i % len(marker_symbols)] for i in range(num_clusters)}
-
-
-
-for cluster in selected_clusters:
-    cluster_data = filtered_scatter_plot_df[filtered_scatter_plot_df['cluster'] == cluster]
-    fig.add_trace(go.Scatter3d(
-        x=cluster_data['X'],
-        y=cluster_data['Y'],
-        z=cluster_data['bias_mV'],
-        mode='markers',
-        marker=dict(size=cluster_data.peak_widths*50,
-                    color=cluster_data.peak_heights, symbol=cluster_to_symbol[cluster],
-                    opacity=0.9,colorbar=dict (title='Peak Heights') ),
-        name=f'Cluster {cluster}'
-    ))
-
-# Layout settings
-fig.update_layout(
-    scene=dict(
-        xaxis=dict(title='X-axis'),
-        yaxis=dict(title='Y-axis'),
-        zaxis=dict(title='bias_mV'),
-    ),
-    #title='3D Scatter Plot with Clustering',
-     title={
-        'text': f"3D Scatter Plot with Clustering<br><sup>Selected Clusters: {', '.join(map(str, selected_clusters))}</sup>",
-        'y': 0.95,
-        'x': 0.5,
-        'xanchor': 'center',
-        'yanchor': 'top'
-    },
-    margin=dict(l=10, r=10, b=10, t=10),
-    
-    width=750,  # Desired width (in pixels)
-    height=750  # Desired height (in pixels)
-    
-  
-)
-
-# Show interactive plot
-fig.show()
-# -
-
-# #### check statatistic 
-# * between -1 ~ 1 mV,  histogram of clusters 
-
-
-# +
-#grid_LDOS_pks_df_pks = df[(df.cluster ==1)|(df.cluster ==2)|(df.cluster ==3)|(df.cluster ==4)|(df.cluster ==5)]
-grid_LDOS_pks_df_pks = df[df['cluster'].isin([0, 5])]
-#grid_LDOS_pks_df_zbp = df[(df.cluster ==3)|(df.cluster ==6)|(df.cluster ==7)|(df.cluster ==6)]
-grid_LDOS_pks_df_pks
-
-
-
-
-# +
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
-from sklearn.neighbors import NearestNeighbors
-
-# 데이터 불러오기 (이미 df로 로드되어 있다고 가정)
-df = grid_LDOS_pks_df_pks
-
-# 사용할 열 선택
-columns_to_use = ['Y','X', 'peak','bias_mV', 'peak_heights', 'peak_prominences', 'peak_widths']
-
-# 선택한 열만 추출
-X = df[columns_to_use]
-
-# 데이터 정규화
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
-
-# KMeans 클러스터링 수행
-n_clusters = 6
-kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-cluster_labels = kmeans.fit_predict(X_scaled)
-
-# 결과를 원본 데이터프레임에 추가
-df['new_cluster'] = cluster_labels
-
-
-# 클러스터별 샘플 수 확인
-print("\n클러스터별 샘플 수:")
-print(df['new_cluster'].value_counts().sort_index())
-
-# (선택적) KNN을 사용한 클러스터 중심 찾기
-nn = NearestNeighbors(n_neighbors=1)
-nn.fit(X_scaled)
-cluster_centers = kmeans.cluster_centers_
-closest_points = nn.kneighbors(cluster_centers, return_distance=False)
-
-print("\n각 클러스터의 중심에 가장 가까운 데이터 포인트:")
-for i, point_idx in enumerate(closest_points):
-    print(f"Cluster {i}: {df.iloc[point_idx[0]]['Y']}, {df.iloc[point_idx[0]]['X']}")
-
-# +
-import plotly.express as px
-
-# Symbol mapping (adjust according to the number of clusters)
-symbol_map = {0: 'circle', 1: 'circle-open', 2: 'cross', 3: 'diamond', 
-              4: 'diamond-open', 5: 'square', 6: 'square-open', 7: 'x'}
-
-# Create 3D scatter plot
-fig = px.scatter_3d(df, 
-                    x='X', y='Y', z='bias_mV',
-                    color='peak_heights',
-                    size='peak_widths',
-                    symbol='new_cluster',
-                    symbol_map=symbol_map,
-                    opacity=0.3,  # Set opacity for all points (0.0 to 1.0)
-                    labels={'X': 'X ', 
-                            'Y': 'Y ', 
-                            'bias_mV': 'bias_mV',
-                            'peak_heights': 'peak_heights',
-                            'peak_widths': 'peak_widths'},
-                    title='LDOS pks')
-
-# Set color scale
-fig.update_traces(marker=dict(colorscale='Viridis'))
-
-# Adjust layout
-fig.update_layout(scene=dict(
-                    xaxis_title='X',
-                    yaxis_title='Y',
-                    zaxis_title='bias_mV'),
-                  width=800,
-                  height=800)
-
-# Display the plot
-fig.show()
-# -
-
-df
-
-# +
-
-# x, y 값이 같은 그룹 내에서 peak bias 간격 계산
-df = df.sort_values(['X', 'Y', 'bias_mV'])
-df['pk_distance'] = df.groupby(['X', 'Y'])['bias_mV'].diff()
-
-# 각 (X, Y) 그룹의 마지막 행에 np.nan 할당
-df.loc[df.groupby(['X', 'Y'])['bias_mV'].idxmax(), 'pk_distance'] = np.nan
-
-# cluster별로 kde plot 생성
-g = sns.FacetGrid(df, col="cluster", col_wrap=4, height=3)
-g.map(sns.kdeplot, "pk_distance", shade=True)
-# 각 서브플롯에 그리드 추가
-for ax in g.axes.flat:
-    ax.grid(True)
-
-g.set_axis_labels("Peak Bias Gap", "Density")
-g.fig.suptitle("Distribution of Peak Bias Gaps by Cluster", y=1.02)
-plt.tight_layout()
-plt.show()
-
-# +
-
-sns.kdeplot (df.bias_mV)
-# -
-
-# ### to check peak energy position distribution to check CdGM states 
-
-# +
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import gaussian_kde
-
-def kde_and_peaks(data, bw_method=0.2):
-    """
-    Perform Kernel Density Estimation (KDE) on the input data and find peaks.
-
-    Parameters:
-    data (array-like): Input data to compute KDE and detect peaks.
-    bw_method (float): The bandwidth method for KDE. Default is 0.2.
-
-    Returns:
-    x_range (ndarray): The range of x values.
-    y (ndarray): KDE values for the corresponding x values.
-    peak_indices (ndarray): Indices of the peaks found in the KDE curve.
-    """
-    if len(data) > 1:  # Ensure there are at least 2 data points
-        kde = gaussian_kde(data, bw_method=bw_method)
-        x_range = np.linspace(data.min(), data.max(), 1000)  # Create a range for KDE evaluation
-        y = kde(x_range)  # Compute KDE
-        
-        # Detect peaks (local maxima) in the KDE curve
-        peaks = np.diff(np.sign(np.diff(y))) < 0
-        peak_indices = np.where(peaks)[0] + 1  # Adjust peak indices to match the original data length
-        return x_range, y, peak_indices
-    else:
-        return np.array([]), np.array([]), np.array([])  # Return empty arrays if data is insufficient
-
-def plot_kde_peaks(df, col_wrap=4, height=3):
-    """
-    Plot KDE curves and detected peaks for each cluster in the DataFrame.
-
-    Parameters:
-    df (DataFrame): Input DataFrame containing cluster information and peak distances.
-    col_wrap (int): Number of columns in the subplot grid.
-    height (int): Height of each subplot.
-
-    Returns:
-    summary_df (DataFrame): A DataFrame summarizing the number of peaks per cluster.
-    peak_distances_dict (dict): A dictionary containing peak distances for each cluster.
-    """
-    n_clusters = df['cluster'].nunique()  # Count unique clusters
-    # Set up the figure and axes for subplots
-    fig, axes = plt.subplots(nrows=(n_clusters + col_wrap - 1) // col_wrap, ncols=col_wrap, figsize=(col_wrap*height, height*(n_clusters // col_wrap + 1)))
-    axes = axes.flatten()  # Flatten axes for easier access
-    
-    peak_distances_dict = {}  # Dictionary to store peak distances per cluster
-    summary_data = []  # List to store peak summary information
-    
-    for i in range(n_clusters):
-        # Select data for the current cluster
-        cluster_data = df[df['cluster'] == i]['pk_distance'].dropna()
-        
-        if len(cluster_data) > 1:  # Check if there are enough data points
-            x, y, peak_indices = kde_and_peaks(cluster_data)  # Perform KDE and find peaks
-            
-            # Plot histogram and KDE curve
-            axes[i].hist(cluster_data, bins=50, density=True, alpha=0.5, edgecolor='black')
-            axes[i].plot(x, y)
-            
-            # Store summary and peak distances for the current cluster
-            summary_data.append({'cluster': i, 'peak_count': len(peak_indices)})
-            peak_distances_dict[i] = x[peak_indices]  # Store peak distances
-        else:
-            # Display a message for clusters with insufficient data
-            axes[i].text(0.5, 0.5, "Insufficient data", horizontalalignment='center', verticalalignment='center', transform=axes[i].transAxes)
-            summary_data.append({'cluster': i, 'peak_count': 0})
-    
-    plt.tight_layout()  # Adjust the layout to prevent overlapping plots
-    plt.show()  # Display the plot
-    
-    # Return summary and peak distances
-    return pd.DataFrame(summary_data), peak_distances_dict
-
-
-
-# +
-
-# Execute the function
-summary_df, peak_distances_dict = plot_kde_peaks(df, col_wrap=4, height=3)
-print(summary_df)
-# Concatenate all peak distances into a single array
-all_distances = np.concatenate(list(peak_distances_dict.values()))
-
-sns.scatterplot(all_distances)
-# -
-
-peak_distances_dict
-
-# ## How to distinguish SC peaks 
-# ### peak assignment comparision with 2nd derivative EDC-like results
-
-# ## additional clustering after MZBS collecting 
-#
-
-
-
-# ## Filtering, Thresholds, and Segmentation
-#
-# * back to [**Preparation**](#Preparation)
-
-grid_topo.topography.plot()
-
-
-
-# ##### grid_topo rotation 
-
-def rotate_2D_xr(xrdata, rotation_angle):
-    """
-    Rotate a 2D xarray dataset while maintaining its original center position.
-
-    This function performs the following steps:
-    1. Calculates the original center of the xarray.
-    2. Pads the xarray to accommodate rotation.
-    3. Rotates the padded xarray.
-    4. Adjusts the coordinates to maintain the original center position.
-
-    Parameters:
-    -----------
-    xrdata : xarray.Dataset
-        The input 2D xarray dataset to be rotated.
-    rotation_angle : float
-        The angle of rotation in degrees.
-
-    Returns:
-    --------
-    xarray.Dataset
-        The rotated xarray dataset with preserved center position.
-    """
-
-    # Calculate original center
-    original_center_x = xrdata.X.mean().item()
-    original_center_y = xrdata.Y.mean().item()
-
-    # Calculate padding size
-    for ch_i, ch_name in enumerate(xrdata):
-        if ch_i == 0:  # use only the first channel to calculate padding size 
-            padding_shape = skimage.transform.rotate(xrdata[ch_name].values.astype('float64'),
-                                                     rotation_angle,
-                                                     resize=True).shape          
-            padding_xy = (np.array(padding_shape) - np.array(xrdata[ch_name].shape) + 1) / 2
-            padding_xy = padding_xy.astype(int)
-    
-    # Pad the xarray
-    xrdata_pad = xrdata.pad(X=(padding_xy[0], padding_xy[0]), 
-                            Y=(padding_xy[1], padding_xy[1]),
-                            mode='constant',
-                            cval=xrdata.min())
-
-    # Handle cases where padding shape might differ
-    if np.array(xrdata_pad[ch_name]).shape != padding_shape:
-        # Case: padding shape is +1 larger than rotation shape
-        x_spacing = np.diff(xrdata.X).mean()
-        y_spacing = np.diff(xrdata.Y).mean()
-        x_pad_dim = padding_shape[0]
-        y_pad_dim = padding_shape[1]
-        x_pad_arr = np.linspace(-1*padding_xy[0]*x_spacing, x_spacing*x_pad_dim, x_pad_dim+1)
-        y_pad_arr = np.linspace(-1*padding_xy[1]*y_spacing, y_spacing*y_pad_dim, y_pad_dim+1)
-        xrdata_pad = xrdata_pad.assign_coords({"X": x_pad_arr}).assign_coords({"Y": y_pad_arr})
-        xrdata_rot = xrdata_pad.sel(X=xrdata_pad.X[:-1].values, Y=xrdata_pad.Y[:-1].values)
-        print('padding size != rot_size')
-    else:
-        # Case: padding shape matches rotation shape
-        x_spacing = np.diff(xrdata.X).mean()
-        y_spacing = np.diff(xrdata.Y).mean()
-        x_pad_dim = padding_shape[0]
-        y_pad_dim = padding_shape[1]
-        x_pad_arr = np.linspace(-1*padding_xy[0]*x_spacing, x_spacing*x_pad_dim, x_pad_dim)
-        y_pad_arr = np.linspace(-1*padding_xy[1]*y_spacing, y_spacing*y_pad_dim, y_pad_dim)
-        xrdata_pad = xrdata_pad.assign_coords({"X": x_pad_arr}).assign_coords({"Y": y_pad_arr})
-        xrdata_rot = xrdata_pad.copy()
-        print('padding size == rot_size')
-
-    # Perform rotation on each channel
-    for ch in xrdata:
-        xrdata_rot[ch].values = skimage.transform.rotate(xrdata[ch].values.astype('float64'),
-                                                         rotation_angle,
-                                                         resize=True,
-                                                         cval=xrdata[ch].values.astype('float64').min())
-
-    # Adjust coordinates to maintain original center
-    new_center_x = xrdata_rot.X.mean().item()
-    new_center_y = xrdata_rot.Y.mean().item()
-
-    x_offset = original_center_x - new_center_x
-    y_offset = original_center_y - new_center_y
-
-    # Apply offset to maintain original center
-    xrdata_rot = xrdata_rot.assign_coords(X=xrdata_rot.X + x_offset, Y=xrdata_rot.Y + y_offset)
-
-    return xrdata_rot
-
-
-grid_topo_r32 = rotate_2D_xr(grid_topo, rotation_angle= 32)
-grid_topo_r32.topography.plot()
-plt.show()
-
-# ##### grid_LDOS rotation  
-
-grid_topo_r32
-
-grid_LDOS_r32 = rotate_3D_xr(grid_LDOS, rotation_angle= 32)
-hv_bias_mV_slicing(grid_LDOS_r32,ch='LDOS')
-
-# ###### grid_LDOS rotation & slicing_bias_mV
-
-hv_bias_mV_slicing(grid_LDOS_r32,ch='LDOS')
-
-# ###### grid_LDOS rotation & crop near step edge 
-#
-
-grid_LDOS_r32_crop = grid_LDOS_r32.where((grid_LDOS_r32.X >1E-7)&
-                                         (grid_LDOS_r32.X < 2.5E-7)&
-                                         (grid_LDOS_r32.Y >2E-7)&
-                                         (grid_LDOS_r32.Y < 3E-7), drop = True)
-hv_bias_mV_slicing(grid_LDOS_r32_crop,ch='LDOS')
-
-# ###### avg Y direction 
-
-#grid_LDOS_r32_crop.LDOS.to_dataframe().groupby('X').mean().plot()#.groups#..mean()#.plot()
-sns.lineplot(grid_LDOS_r32_crop.LDOS.to_dataframe(), x='X', y='LDOS')
-plt.show()
-
-grid_LDOS_r32_crop.mean(dim='Y').LDOS.T.plot()
-plt.show()
-
-grid_topo_r32
-
-grid_topo_r32_crop = grid_topo_r32.where((grid_LDOS_r32.X >1E-7)&
-                                         (grid_LDOS_r32.X < 2.5E-7)&
-                                         (grid_LDOS_r32.Y >2E-7)&
-                                         (grid_LDOS_r32.Y < 3E-7), drop = True)
-grid_topo_r32_crop
-
-# Usage:
-plot_overlay_with_grid_topo_N_crop = plot_overlay_with_crop(grid_topo_r32_crop, grid_topo_r32)
-plot_overlay_with_grid_topo_N_crop
-plt.show()
-
-# +
-# Flattening and Drift Compensation 
-# -
-
-
-# ## bounding box selection of grid_LDOS data 
-
-# ## Flattening and Drift Compensation 
-#
-#
-# * back to [**Preparation**](#Preparation)
-
-# After  grid2xr function 
-# grid_xr.bias_mv ==> interpolated 
-grid_3D.bias_mV.plot.scatter()
-
-
-# * **2024MayFeTe0.55Se0.45** dataset shows different bias_mV offset for every pixel
-#
-#     * find the bias_mV valuve where grid_3D.I_fb = 0
-# * gird_3D.bias_V.isel(grid_3D.I_fb=0)
-
-# ## <font color= blue >  1-3. Check bias_mV ofsset  </font> 
-# ### <font color= blue >  1-3.1. check the current is zero when bias_mV is zero  </font> 
-# * if bias offset is close to zero : leave it as it is 
-# * "bias_offset_adjust ==  **Falas** " is default
-#
-# * if "bias_offset_adjust ==  **True** "  $\to$ offset adjustment for bias_mV. 
-# * __select defect free area for bais_mV = 0  reference__
-
-def hv_XY_slicing(xr_data,
-                  ch = 'LIX',
-                  slicing= 'X', 
-                  frame_width = 200,
-                  cmap = 'bwr'): 
-    '''
-    input : xarray dataset 
-    output : holoview image 
-    
-    
-    * slicing 3D data set in X-bias_mV or Y-bias_mV plane 
-    * X or Y position is knob
-    
-    
-    default channel  =  'LIX_fb',  or assgin 'I_fb'
-    default setting for frame width and cmap  can be changed. 
-    if you need to add color limit 
-     
-    add ".opts(clim=(0, 1E-10))"
-    
-    '''
-    import holoviews as hv
-    from holoviews import opts
-
-    xr_data_hv = hv.Dataset(xr_data[ch])
-
-    hv.extension('bokeh')
-    ###############
-    # bias_mV slicing
-    if slicing == 'Y':
-        dmap_plane  = [ "X","bias_mV"]
-
-        dmap = xr_data_hv.to(hv.Image,
-                             kdims = dmap_plane,
-                             dynamic = True )
-        dmap.opts(colorbar = True,
-                  cmap = cmap,
-                  frame_width = frame_width).relabel('X - bias_mV plane slicing: ')
-    else : #slicing= 'X'
-        dmap_plane  = [ "Y","bias_mV"]
-
-        dmap = xr_data_hv.to(hv.Image,
-                             kdims = dmap_plane,
-                             dynamic = True )
-        dmap.opts(colorbar = True,
-                  cmap = cmap,
-                  frame_width = frame_width).relabel('Y - bias_mV plane slicing: ')
-    fig = hv.render(dmap)
-    return dmap   
-
-
-# +
-#grid_3D_bias_zm 
-# close up the bias range near zero 
-
-grid_LDOS_bias_zm = grid_LDOS.where(grid_LDOS.bias_mV>-0.5, drop=True).where(grid_LDOS.bias_mV<0.5, drop=True)
-hv_XY_slicing(grid_LDOS_bias_zm, ch = 'LDOS',slicing= 'X')
-
-# to check bias offset near low bais region only. 
-# -
-
-# ### <font color= blue >  1-3.2. Select bounding box with holoview  </font> 
-#
-# * if there is large near-zero state, bias offset adjustment is affecte 
-#     $\to$ avoid defective area 
-# * make it as a function later 
-# * ATM, I could not find the way to add an interactive bbox options to functions. 
-#     * fail to callback(or stream) of selected bbox points. 
-
-# +
-import holoviews as hv
-from holoviews import opts
-hv.extension('bokeh')
-
-xr_data = grid_LDOS; ch = 'LDOS'; frame_width = 400
-xr_data_channel_hv = hv.Dataset(xr_data[ch])
-
-# bias_mV slicing
-dmap_plane  = ["X","Y"]
-dmap = xr_data_channel_hv.to(hv.Image,
-                          kdims = dmap_plane,
-                          dynamic = True )
-dmap.opts(colorbar = True,
-          cmap = 'bwr',
-          frame_width = frame_width,
-          aspect = 'equal')#.relabel('XY plane slicing: ')
-xr_data_channel_hv_image  = hv.Dataset(
-    xr_data[ch].isel(bias_mV = 0)).relabel('for BBox selection : ')
-
-bbox_points = hv.Points(xr_data_channel_hv_image).opts(frame_width = frame_width,
-                                                    color = 'k',
-                                                    aspect = 'equal',
-                                                    alpha = 0.1,                                   
-                                                    tools=['box_select'])
-
-bound_box = hv.streams.BoundsXY(source = bbox_points,
-                                bounds=(0,0,0,0))
-#dmap.opts(clim = (0,1E-10))*bbox_points
-dmap.opts()*bbox_points
-
-# use the bound_box 
-# -
-
-bound_box.bounds
-
-
-# ### <font color= blue >  1-3.3. Crop original xr data with selected bounding box </font> 
-#
-
-def crop_xr_data_with_bounding_box(xr_data, bound_box= bound_box):
-    """
-    Crop a region from a DataArray based on a bounding box.
-
-    Parameters:
-    - xr_data (xr.DataArray): The input DataArray to be cropped.
-    - bound_box (tuple): A tuple containing the coordinates (x0, y0, x1, y1) 
-    of the bounding box.
-    - bound_box is from hv bbox points 
-    
-
-    Returns:
-    - cropped_data (xr.DataArray): The cropped DataArray.
-    """
-    
-    if (bound_box.bounds[0]==0)&(bound_box.bounds[1]==0)&(bound_box.bounds[2]==0)&(bound_box.bounds[3]==0):
-    # No box selection
-        x0, y0, x1, y1 = xr_data.X.min(), xr_data.Y.min(), xr_data.X.max(), xr_data.Y.max()
-        print ("no bound_box")
-    else: 
-        x0, y0, x1, y1 = bound_box.bounds
-        print ("bound_box selected")
-    cropped_data = xr_data.sel(X=slice(x0, x1), Y=slice(y0, y1))
-    return cropped_data
-
-
-grid_3D_bias_zm_crop = crop_xr_data_with_bounding_box(grid_3D_bias_zm,bound_box)
-grid_3D_bias_zm_crop
-
-
-# ### <font color= blue >  1-3.4. Bias range offset using offest for zero from selected bounding box </font> 
-#
-#
-# ####   In case of <font color= red > **superconducting** STS, </font> bias offset using I_fb_avg is not correct!
-
-##
-# find neares I =0 bias_mV 
-def Bias_mV_offset_crop_area_avg(originalxr = grid_3D,
-                                 cropped_xr = grid_3D_bias_zm_crop,
-                                 bais_offset_adjust = False):
-    originalxr_offset = originalxr.copy()
-    I_fb_avg_df = cropped_xr.I_fb.mean (dim = ['X','Y']).to_dataframe().abs()
-    if I_fb_avg_df.I_fb.idxmin() == 0:
-        print ('Bias_mV is set to I = 0')
-    else:
-        print ('need to adjust Bias_mV Zero')
-        print ('Bias_mV Zero shifted : '+ str( round(I_fb_avg_df.I_fb.idxmin(),3)  )+ ' mV')
-    if bais_offset_adjust == True : 
-        # when adjust bias offset only when it is True.         
-        originalxr_offset = originalxr.assign_coords(bias_mV= (originalxr.bias_mV + I_fb_avg_df.I_fb.idxmin()  ))   
-    else: pass
-    return originalxr_offset
-
-
-grid_3D = Bias_mV_offset_crop_area_avg(originalxr = grid_3D, cropped_xr = grid_3D_bias_zm_crop,bais_offset_adjust = False)
-#grid_3D_0.where(grid_3D_0.bias_mV>-1, drop = True).where(grid_3D_0.bias_mV<1, drop = True)
-#use bias_mV crop if needed
-# check low bais region only. 
-
-# +
-#grid_3D
-# -
-
-grid_3D.attrs['bias_mV_step'] = np.abs(np.unique(np.diff(grid_3D.bias_mV.values))).mean().round(3)
-grid_3D
-
-#hv_XY_slicing(grid_3D_0, ch = 'LIX_fb',slicing= 'X')#.opts(clim=(0, 0.8E-10)) # Use climn if needed
-hv_XY_slicing(grid_3D.where(grid_3D.bias_mV>-0.6, drop = True).where(grid_3D.bias_mV<0.6, drop = True), ch = 'LIX_fb',slicing= 'X').opts(clim=(0, 0.3E-12)) # Use climn if needed
-
-# ### 1.2.3. Unit calculation (LDOS_fb)
-#     * for semiconductor: CBM,VBM check. gap_map check
-#     * add gap_maps to grid_2D
-
-# +
-grid_3D_gap =  grid_3D_SCgap(grid_3D)
-grid_3D_gap
-
-grid_LDOS = grid_3D_gap[['LDOS_fb' ]]
-grid_LDOS
-# -
-
-
-# ### 1.4 Topography view 
-
-# +
-grid_topo =  plane_fit_y_xr(plane_fit_surface_xr(grid_topo))
-grid_topo
-
-#isns.imshow(plane_fit_y_xr(grid_topo).where(grid_topo.Y < 0.7E-9, drop=True).topography)
-
-#grid_topo = grid_topo.drop('gap_map_I').drop('gap_map_LIX')
-
-isns.imshow(grid_topo.topography, cmap ='copper')
-#isns.imshow(grid_topo.topography.T, cmap ='copper')
-plt.show()
-# -
-
-
-# # Analysis 
-#
-# back to * [**Preparation**](#Preparation)
-
-# ### add z drift compensation with 1D plot 
-
-# ####  check topography drift & compensate it 
-
-# +
-# make a 1D topo curve (z vs data acquisition time)
-topo1D = grid_xr.topography.values.ravel()
-
-# Convert to a different endianness and create a Series
-topo1D = topo1D.byteswap().newbyteorder()
-topo1Ddf = pd.Series(topo1D)
-
-# Calculate the differential
-topo1D_diff_df = topo1Ddf.diff(periods=1)
-sns.scatterplot(topo1D_diff_df)
-
-
-# +
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-
-def perform_polyfit_and_save_difference(topo1Ddf_0, degree=2):
-    """
-    Perform polynomial fitting on the given pandas Series and save the difference
-    between the original data and the fitted polynomial.
-
-    Args:
-        topo1Ddf_0 (pandas.Series): The input pandas Series for polynomial fitting.
-        degree (int): The degree of the polynomial fit (default is 2 for a quadratic fit).
-
-    Returns:
-        pandas.Series: A new pandas Series containing the difference between the original data
-                      and the fitted polynomial.
-    """
-    # Perform polyfit
-    coefficients = np.polyfit(topo1Ddf_0.index, topo1Ddf_0, degree)
-    p = np.poly1d(coefficients)
-
-    # Calculate the difference between the original data and polyfit result
-    topo1Ddf_0_sub_polyfit = topo1Ddf_0 - p(topo1Ddf_0.index)
-
-    # Create a new figure
-    fig, ax = plt.subplots()
-
-    # Plot the original data
-    topo1Ddf_0.plot(ax=ax, label='Original Data')
-
-    # Plot the polyfit result
-    ax.plot(topo1Ddf_0.index, p(topo1Ddf_0.index), color='green', label=f'{degree}th-degree Regression')
-
-    # Set labels and legend
-    ax.set_xlabel('Index')
-    ax.set_ylabel('Value')
-    ax.legend()
-
-    # Show the plot
-    plt.show()
-
-    # Return the difference between original data and polyfit result
-    return topo1Ddf_0_sub_polyfit
-
-# Example usage:
-# Replace topo1Ddf_0 with your pandas Series
-# By calling the function, you will get the topo1Ddf_0_sub_polyfit Series
-# -
-
-
-# #### If there is outliers, split Z topo change for separate fitting
-
-# +
-## check outliers in Topography 
-## for better background substraction 
-
-
-def find_outlier_indices(series):
-    """
-    Finds the indices of outliers in the given Series using the IQR method.
-
-    Args:
-        series (pandas.Series): The input 1D Series containing potential outliers.
-
-    Returns:
-        pandas.Index: A pandas Index object containing the indices of the outliers.
-    """
-    Q1 = series.quantile(0.25)
-    Q3 = series.quantile(0.75)
-    IQR = Q3 - Q1
-    lower_bound = Q1 -8* IQR
-    upper_bound = Q3 +8 * IQR
-    return series[(series < lower_bound) | (series > upper_bound)].index
-
-
-
-# -
-
-find_outlier_indices(topo1D_diff_df.diff())
-print(find_outlier_indices(topo1D_diff_df.diff()))
-# check number outliers 
-
-# #### if there is no outlier (= no abrupt Z change), skip this section 
-
-"""
-#
-topo1D_diff_df.iloc[find_outlier_indices(topo1D_diff_df.diff())[0]-3:
-                    find_outlier_indices(topo1D_diff_df.diff())[0]+3].plot()
-
-# domain selection --> after outlier detection 
-#############
-#  split topo 1D 
-##############
-topo1Ddf_0 = topo1Ddf.iloc[:find_outlier_indices(topo1D_diff_df.diff())[0]]
-topo1Ddf_1 = topo1Ddf.iloc[find_outlier_indices(topo1D_diff_df.diff())[0]:]
-# area selection 
-"""
-
-
-"""
-# substract polyfit results from original topography 
-# separeate polyfit applied for each area (divided by outliers) 
-
-topo1Ddf_0_sub = perform_polyfit_and_save_difference(topo1Ddf_0)
-topo1Ddf_1_sub = perform_polyfit_and_save_difference(topo1Ddf_1)
-
-# connect substracted topography & reshape the topography 
-
-topo1Ddf_sub= pd.concat([topo1Ddf_0_sub,topo1Ddf_1_sub])
-
-"""
-
-
-sns.lineplot(topo1D_diff_df)
-
-# +
-# connect substracted topography & reshape the topography 
-
-topo1Ddf_sub= perform_polyfit_and_save_difference(topo1Ddf)
-
-topo1Ddf_sub_xr = grid_topo.copy()
-topo1Ddf_sub_xr.topography.values = topo1Ddf_sub.to_numpy().reshape(grid_topo.topography.shape)
-
-
-# +
-plane_fit_y_xr(topo1Ddf_sub_xr).topography.plot()
-plt.show()
-
-grid_topo = plane_fit_y_xr(topo1Ddf_sub_xr)
-isns.imshow(grid_topo.topography)
-# -
-
-# ##  Grid area extract 
-#
-# ### grid 3D_LDOS
-#
-#
-#
-
-# # Crop X 
-
-grid_LDOS = grid_LDOS.isel(X=slice(0, 40))
-
-# ## bias range selection to reduce calculation time 
-
-# +
-data_array_slct = grid_LDOS.where(grid_LDOS.bias_mV<1, drop=True).where(grid_LDOS.bias_mV>-1, drop=True)
-data_array_slct
-# check PCA_DBSCAN_clstr channel is broadcasting 
-
-# check XY slicing 
-hv.extension('bokeh')
-hv_XY_slicing(data_array_slct, ch = 'LDOS_fb',slicing= 'X').opts(clim=(0, 1E-10)) # check low intensity area
-
-
-# +
-import holoviews as hv
-from holoviews import opts
-hv.extension('bokeh')
-
-xr_data = data_array_slct; ch = 'LDOS_fb'; frame_width = 400
-xr_data_channel_hv = hv.Dataset(xr_data[ch])
-
-# bias_mV slicing
-dmap_plane  = ["X","Y"]
-dmap = xr_data_channel_hv.to(hv.Image,
-                          kdims = dmap_plane,
-                          dynamic = True )
-dmap.opts(colorbar = True,
-          cmap = 'bwr',
-          frame_width = frame_width,
-          aspect = 'equal')#.relabel('XY plane slicing: ')
-xr_data_channel_hv_image  = hv.Dataset(
-    xr_data[ch].isel(bias_mV = 0)).relabel('for BBox selection : ')
-
-bbox_points = hv.Points(xr_data_channel_hv_image).opts(frame_width = frame_width,
-                                                    color = 'k',
-                                                    aspect = 'equal',
-                                                    alpha = 0.1,                                   
-                                                    tools=['box_select'])
-
-bound_box = hv.streams.BoundsXY(source = bbox_points,
-                                bounds=(0,0,0,0))
-#dmap.opts(clim = (0,1E-10))*bbox_points
-dmap.opts()*bbox_points
-
-# use the bound_box 
-# -
-
-# ### bound_box region based on hv selection tool
-
-bound_box
-print (bound_box.bounds)
-
-# +
-###########
-# select from boundbox
-
-#grid_3D_crop = crop_xr_data_with_bounding_box(data_array_slct, bound_box)
-
-# or use original setup
-
-grid_3D_crop = data_array_slct
-
-# +
-#grid_3D_crop= grid_3D_crop.drop_vars('PCA_DBSCAN_clstr')
-# "drop_vars" can be Still DataSet,
-# Choose ['LDOS_fb'] is DataArray
-grid_3D_crop
-
-grid_3D_crop.to_dataframe().describe()
-# -
-
-# grid_LDOS_crop= grid_LDOS.where(grid_LDOS.bias_mV<1.5, drop = True).where(grid_LDOS.bias_mV>-1.5, drop = True)
-
-
-# ### 1.6.Data Selection with HoloView
-# * using Bounding Box or Lasso
-#
-# * currently only Bounding Box plot is working. 
-# * check the Lass selection later. 
-# * use stream pipe line (not a functino yet..)
-#
-
-# #### 1.6.2 bokeh plot & Bound box selection 
-# ####       $\to$ selected points = Bound Box 
-
-grid_LDOS
-
-# +
-import holoviews as hv
-from holoviews import opts
-hv.extension('bokeh')
-
-xr_data = grid_LDOS
-ch_name = 'LDOS'
-frame_width = 400
-
-xr_data_channel_hv = hv.Dataset(xr_data[ch_name])
-
-# bias_mV slicing
-dmap_plane  = ["X","Y"]
-dmap = xr_data_channel_hv.to(hv.Image,
-                          kdims = dmap_plane,
-                          dynamic = True )
-dmap.opts(colorbar = True,
-          cmap = 'bwr',
-          frame_width = frame_width,
-          aspect = 'equal')#.relabel('XY plane slicing: ')
-
-xr_data_channel_hv_image  = hv.Dataset(xr_data[ch_name].isel(bias_mV = 0)).relabel('for BBox selection : ')
-
-bbox_points = hv.Points(xr_data_channel_hv_image).opts(frame_width = frame_width,
-                                                    color = 'k',
-                                                    aspect = 'equal',
-                                                    alpha = 0.1,                                   
-                                                    tools=['box_select'])
-
-bound_box = hv.streams.BoundsXY(source = bbox_points,
-                                bounds=(0,0,0,0))
-#dmap.opts(clim = (0,1E-10))*bbox_points
-dmap.opts()*bbox_points
-
-
-## hv.DynamicMap( 뒤에는 function 이 와야함), streams  로 해당 영역을 지정.( or 함수의 입력정보 지정) 
-# averaged curve 를 그리기 위해서 해당영역을  xr  에서 average  해야함.. 
-# curve 의 area 로 error bar도 같이 그릴것.. 
-# -
-
-bbox_1_BoundsXY = bound_box
-
-
-bbox_2_BoundsXY = bound_box
-
-bbox_3_BoundsXY = bound_box
-
-bbox_2, _ = hv_bbox_avg(grid_LDOS, bound_box= bound_box, ch = ch_name,slicing_bias_mV = 0.2)
-#bbox_3, _ = hv_bbox_avg(grid_LDOS, bound_box= bound_box, ch = ch_name,slicing_bias_mV = 0.4)
-#bbox_4, _ = hv_bbox_avg(grid_LDOS, bound_box= bound_box, ch ='ch_name,slicing_bias_mV = 0.4)
-
-#bbox_list = [bbox_1_BoundsXY, bbox_2_BoundsXY]
-bbox_list = [bbox_1_BoundsXY, bbox_2_BoundsXY,bbox_3_BoundsXY]
-bbox_list
-
-grid_LDOS
-
-# +
-import xarray as xr
-import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib.patches import Rectangle
-
-def plot_ldos_with_bboxes(grid_LDOS, bbox_list, slicing_bias_mV):
-    # 그래프 설정
-    fig = plt.figure(figsize=(15, 6))
-    ax1 = fig.add_subplot(121)
-    ax2 = fig.add_subplot(122)
-    
-    # LDOS 이미지 그리기
-    ldos_slice = grid_LDOS.LDOS.sel(bias_mV=slicing_bias_mV, method = 'nearest')
-    im = ax1.imshow(ldos_slice, extent=[grid_LDOS.X.min(), grid_LDOS.X.max(), 
-                                        grid_LDOS.Y.min(), grid_LDOS.Y.max()],
-                    origin='lower', aspect='equal')
-    plt.colorbar(im, ax=ax1, label='LDOS')
-    
-    # 색상 설정
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(bbox_list)))
-    
-    # bbox 그리기 및 평균 LDOS 계산
-    for i, (bbox, color) in enumerate(zip(bbox_list, colors), 1):
-        x, y, w, h = bbox.bounds
-        rect = Rectangle((x, y), w-x, h-y, fill=False, edgecolor=color, linewidth=2)
-        ax1.add_patch(rect)
-        ax1.text(x, y, str(i), color=color, fontweight='bold')
-        
-        # bbox 내 평균 LDOS 계산
-        mask = ((grid_LDOS.X >= x) & (grid_LDOS.X <= w) & 
-                (grid_LDOS.Y >= y) & (grid_LDOS.Y <= h))
-        avg_ldos = grid_LDOS.LDOS.where(mask)
-        
-        # 평균 LDOS 선 그래프
-        sns.lineplot(data=avg_ldos.to_dataframe(), x='bias_mV', y='LDOS', ax=ax2, 
-                     label=f'bbox {i}', color=color)
-    
-    # 그래프 설정
-    ax1.set_title(f'LDOS at bias_mV = {slicing_bias_mV}')
-    ax1.set_xlabel('X (m)')
-    ax1.set_ylabel('Y (m)')
-    
-    ax2.set_title('Average LDOS in bboxes')
-    ax2.set_xlabel('bias_mV')
-    ax2.set_ylabel('Average LDOS')
-    ax2.legend()
-    
-    plt.tight_layout()
-    plt.show()
-
-# 함수 사용 예시
-# plot_ldos_with_bboxes(grid_LDOS, bbox_list, slicing_bias_mV=0)
-
-
-# -
-
-plot_ldos_with_bboxes(grid_LDOS, bbox_list, slicing_bias_mV= 0 )
-
-# %matplotlib inline
-hv.extension('bokeh')
-
-# #### 1.6.5. Lasso area selection 
-# * it works if I using grid_3D 
-#     * with multiple data channels 
-#     * but not with grid_LDOS (only 1 data channel) 
-# * later.... lasso pts combine_by_coords need to repaired.. 
-#     * but I can extract the target area anyway.. 
-#
-#
-
-# +
-hv.extension('bokeh')
-
-
-grid_channel_hv = hv.Dataset(grid_LDOS.LDOS)
-
-# bias_mV slicing
-dmap_plane  = ["X","Y"]
-dmap = grid_channel_hv.to(hv.Image,
-                          kdims = dmap_plane,
-                          dynamic = True )
-dmap.opts(colorbar = True,
-          cmap = 'bwr',
-          frame_width = 400,
-          aspect = 'equal').relabel('XY plane slicing: ')
-
-
-
-grid_channel_hv_image = hv.Dataset(grid_LDOS.LDOS.isel(bias_mV = 0))
-
-grid_channel_hv_points = hv.Points(grid_channel_hv_image).opts(frame_width = 400,  
-                                   aspect = 'equal', alpha = 0.1,                                   
-                                   tools=['box_select', 'lasso_select']
-                                  )
-
-slct_pts = hv.streams.Selection1D(source=grid_channel_hv_points)
-
-dmap*grid_channel_hv_image*grid_channel_hv_points
-
-## 
-# currently I_fb  crop is working not LDOS_fb 
-# need to change later 
-
-
-# +
-#slct_pts
-pts = grid_channel_hv_points.iloc[slct_pts.index].dframe().set_index(['X', 'Y'])
-
-pts_xr = xr.Dataset.from_dataframe(pts)
-pts_xr
-
-# +
-# lasso selection avg  실패 
-# -
-
-#grid_LDOS
-lss_v1_XY = lss_v1.to_dataframe().reset_index()
-lss_v1_XY
-#lss_v1_XY[lss_v1_XY.LDOS ==True]
-
-#
-grid_filter = np.ones_like(grid_LDOS.LDOS.values)
-for 
-grid_LDOS['filter'] = grid_LDOS.LDOS.copy()
-grid_LDOS['filter'].values
-
-
-lss_v1 = pts_xr
-
-lss_v2 = pts_xr
-
-lss_v3 = pts_xr
-
-lss_v4 = pts_xr
-
-lss_v5 = pts_xr
-
-~lss_v1.to_dataframe().isna()
-
-grid_LDOS['lss_V1']=
-
-true_idx = lss_v1[lss_v1].stack().reset_index().loc[:, ['level_0', 'level_1']].values
-true_idx
-
-
-
-# +
-lss_v1_XY = ~lss_v1.to_dataframe().isna()
-lss_v1_XY= lss_v1_XY.reset_index()
-
-B = grid_LDOS.to_dataframe().unstack('bias_mV')#[~lss_v1.to_dataframe().isna():]
-
-#A.reset_index()
-B.loc[list(zip(lss_v1_XY['X'], lss_v1_XY['Y']))]
-
-# +
-A.columns = pd.MultiIndex.from_product([A.columns, ['']])
-
-print (A)
-# -
-
-A.join(B, how ='inner')
-#pd.merge(A,B, how = 'inner')
-
-grid_LDOS.to_dataframe()#groupby(['Y','X']).mean()
-
-
-lasso_list = [lss_v1,lss_v2,lss_v3,lss_v4,lss_v5]
-
-lasso = lss_v1
-
-# +
-lasso_coords
-
-np.isnan(lss_v1.LDOS)
-# -
-
-sns.lineplot(data=lasso.to_dataframe(), x='bias_mV', y='LDOS',label='1')
-
-# +
-import xarray as xr
-import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib.patches import Polygon
-import numpy as np
-
-def plot_ldos_with_lassos(grid_LDOS, lasso_list, slicing_bias_mV):
-    # 그래프 설정
-    fig = plt.figure(figsize=(15, 6))
-    ax1 = fig.add_subplot(121)
-    ax2 = fig.add_subplot(122)
-    
-    # LDOS 이미지 그리기
-    ldos_slice = grid_LDOS.LDOS.sel(bias_mV=slicing_bias_mV, method = 'nearest')
-    im = ax1.imshow(ldos_slice, extent=[grid_LDOS.X.min(), grid_LDOS.X.max(), 
-                                        grid_LDOS.Y.min(), grid_LDOS.Y.max()],
-                    origin='lower', aspect='equal')
-    plt.colorbar(im, ax=ax1, label='LDOS')
-    
-    # 색상 설정
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(lasso_list)))
-    
-    # lasso 그리기 및 평균 LDOS 계산
-    for i, (lasso, color) in enumerate(zip(lasso_list, colors), 1):
-        lasso_x = lasso.X.values
-        lasso_y = lasso.Y.values
-        
-        # 데이터가 있는 좌표 인덱스 구하기
-        valid_idx = ~np.isnan(lasso.LDOS.values)
-        valid_x, valid_y = np.where(valid_idx)
-        
-        # 데이터가 있는 좌표 값 추출
-        lasso_coords = np.column_stack((lasso.X.values[valid_x], lasso.Y.values[valid_y]))
-        
-        polygon = Polygon(lasso_coords, edgecolor=color, facecolor='none', linewidth=2)
-        ax1.add_patch(polygon)
-        ax1.text(lasso_x[0], lasso_y[0], str(i), color=color, fontweight='bold')
-        """
-        # lasso 내 평균 LDOS 계산
-        x_coords = grid_LDOS.LDOS.coords['X'].values
-        y_coords = grid_LDOS.LDOS.coords['Y'].values
-        mask = np.isin(x_coords, lasso_x) & np.isin(y_coords, lasso_y)
-        avg_ldos = grid_LDOS.LDOS.where(mask)
-        """
-        # 평균 LDOS 선 그래프
-        sns.lineplot(data=lasso.to_dataframe(), x='bias_mV', y='LDOS', ax=ax2, 
-                     label=f'lasso {i}', color=color)
-    
-    # 그래프 설정
-    ax1.set_title(f'LDOS at bias_mV = {slicing_bias_mV}')
-    ax1.set_xlabel('X (m)')
-    ax1.set_ylabel('Y (m)')
-    
-    ax2.set_title('Average LDOS in lassos')
-    ax2.set_xlabel('bias_mV')
-    ax2.set_ylabel('Average LDOS')
-    ax2.legend()
-    
-    plt.tight_layout()
-    plt.show()
-
-# 함수 사용 예시
-# lasso_list = [lasso_v1, lasso_v2, lasso_v3, lasso_v4, lasso_v5]
-# plot_ldos_with_lassos(grid_LDOS, lasso_list, slicing_bias_mV=0)
-
-
-# -
-
-plot_ldos_with_lassos(grid_LDOS, lss_list, slicing_bias_mV=0)
-
-pts_xr.LDOS.plot()
-plt.show()
-
-# +
-grid_3D_slct_pts = xr.combine_by_coords ([grid_LDOS, pts_xr], compat = 'override', join = 'inner')
-#y_pts = points.iloc[slct_pts.index].dframe().Y
-#grid_3D.sel(X = x_pts,Y = y_pts)
-#grid_3D.I_fb.isel(bias_mV = 0).plot()
-
-fig, axs = plt.subplots(ncols = 2, nrows = 1, figsize = (10,3))
-
-grid_3D_slct_pts.LDOS.T.plot(ax = axs[0], robust = True) 
-axs[0].set_aspect= 0.5
-
-sns.lineplot(x = "bias_mV",            
-             y = "LDOS", 
-             data = grid_3D_slct_pts.to_dataframe(),
-             ax = axs[1])
-plt.show()
-#grid_LDOS_slct_pts
-#
-#sns.relplot(x="bias_mV",
-#            y="LIX_fb", 
-#            kind="line",
-#            data=grid_3D_slct_pts.to_dataframe())
-# check. sn.relplot is  figure-level function
-# -
-
-grid_3D_slct_pts
-
-Impurity_surrounding = grid_3D_slct_pts
-
-#Impurity_center
-Impurity_surrounding
-
-grid_3D_slct_pts.I_fb.plot()
-## I_fb area is selected region, no bias_mV info. 
-plt.show()
-
-# +
-
-LDOS_fb_area1_df =  Impurity_center.LIX_fb.to_dataframe()
-LDOS_fb_area2_df =  Impurity_surrounding.LIX_fb.to_dataframe() 
-
-
-'''
-LDOS_fb_area1_df =  bbox_1.LDOS_fb.to_dataframe()
-LDOS_fb_area2_df =  bbox_2.LDOS_fb.to_dataframe() 
-'''
-
-
-# xr to dataframe
-LDOS_fb_area1_df.columns = ['Area1']
-LDOS_fb_area2_df.columns = ['Area2']# change df names 
-
-LDOS_fb_area_df = pd.concat( [LDOS_fb_area1_df,LDOS_fb_area2_df], axis= 1)
-LDOS_fb_area_df# = LDOS_fb_area_df.swaplevel(0,2)
-#LDOS_fb_area_df.swaplevel(0,2) # index level swap. w.r.t. 'bias_mV'
-#LDOS_fb_area_df = LDOS_fb_area_df.swaplevel(0,2).unstack().unstack() # unstack X& Y
-
-
-##sns.lineplot(x= 'bias_mV', y ='LDOS1', data= LDOS_fb_area_df, label = 'area1')
-#sns.lineplot(x= 'bias_mV', y ='LDOS2', data= LDOS_fb_area_df, label = 'area2')
-#plt.show()
-# use the below sns plot instead 
-# -
-
-LDOS_fb_area_df = LDOS_fb_area_df.reset_index()
-LDOS_fb_area_df_melt = LDOS_fb_area_df.melt(id_vars = ['Y','X','bias_mV'], value_vars = ['Area1','Area2'])
-LDOS_fb_area_df_melt.columns = ['Y','X','bias_mV', 'Area','LDOS']
-LDOS_fb_area_df_melt
-
-sns.lineplot(x= 'bias_mV', y = 'LDOS', data = LDOS_fb_area_df_melt, hue ='Area')
-plt.show()
-
-# #### 1.7. area selection based on special selection 
-#     * tresholds_xxxx_xr = LDOS_fb channel th + use threshold_fiip   
-#         * th_otsu_roi_label_2D_xr
-#         * th_multiotsu_roi_label_2D_xr
-#         * th_mean_roi_label_2D_xr
-#         
-#         
-
-# +
-
-#grid_LDOS.rolling(X=3, Y=3,min_periods=2,center= True).mean().isel(bias_mV=0).LDOS_fb.plot()
-#plt.show()
-grid_LDOS_th= th_mean_roi_label_2D_xr(grid_LDOS.rolling(X=4, Y=2,min_periods=2,center= True).mean(),
-                                      bias_mV_th = 0.0,threshold_flip=False)
-
-# +
-#grid_LDOS_th= th_otsu_roi_label_2D_xr(equalize_hist_xr(grid_LDOS), bias_mV_th = 0,  threshold_flip=False)
-# use Otsu 
-
-#grid_LDOS_th= th_multiotsu_roi_label_2D_xr(grid_LDOS, window_length=51, polyorder=3), bias_mV_th = 0.5, multiclasses = 5)
-# in case of multiotsu
-
-grid_LDOS_th= th_mean_roi_label_2D_xr(grid_LDOS.rolling(X=4, Y=2,min_periods=2,center= True).mean(),
-                                      bias_mV_th = 0,threshold_flip=False)
-# in case of mean_roi
-
-# results. 
-    #grid_LDOS_th
-
-isns.imshow (grid_LDOS_th.LDOS_fb_th_label, aspect =1)
-isns.imshow(grid_LDOS_th.LDOS_fb_th)
-plt.show()
-
-
-
-
-# +
-#plot with labes 
-import matplotlib.patches as mpatches
-from skimage.segmentation import clear_border
-from skimage.morphology import closing, square
-from skimage.measure import label, regionprops
-
-fig,ax =  plt.subplots(figsize =  (5,5))
-
-isns.imshow (grid_LDOS_th.LDOS_fb_th_label, ax =ax, aspect = 1)
-label_map = skimage.morphology.closing (grid_LDOS_th.LDOS_fb_th_label, skimage.morphology.square(2))
-# use closing for ROI selection 
-clear_border = False 
-
-if clear_border == True :
-    label_map_clear_border = skimage.segmentation.clear_border( label_map)
-else :     label_map_clear_border =label_map
-# clear border in the label map 
-
-for region in skimage.measure.regionprops(label_map_clear_border):
-    # take regions with large enough areas
-    if region.area >= 5:
-        # draw rectangle around segmented coins
-        minr, minc, maxr, maxc = region.bbox
-        rect = mpatches.Rectangle((minc, minr), maxc - minc, maxr - minr,
-                                  fill=False, edgecolor='red', linewidth=1)
-        ax.add_patch(rect)
-        
-        (center_y,center_x) = region.centroid
-        ax.annotate (region.label, xy= (center_x,center_y), c = 'r')
-        # Anonotate region info by using region properties  
-        
-# use region properties to extract ROI info
-plt.show()
-
-# +
-fig, ax = plt.subplots(figsize = (4,3))
-#slctd_lables = [3,16,15,9,22]
-slctd_lables = [1,2]
-
-#for labels in range (int(grid_LDOS_th.LDOS_fb_th_label.max())):
-for labels in slctd_lables:    
-    sns.lineplot (x = 'bias_mV', y= 'LDOS_fb', 
-              data = grid_LDOS_th.LDOS_fb.where(grid_LDOS_th.LDOS_fb_th_label ==labels ).mean(['X','Y']).to_dataframe(),
-              ax =ax, label = str(labels))
-plt.show()
-# -
-
-LDOS_fb_0_df = grid_LDOS_th.LDOS_fb.where( grid_LDOS_th.LDOS_fb_th_label ==0 ).mean(["X","Y"]).to_dataframe()
-LDOS_fb_1_df = grid_LDOS_th.LDOS_fb.where( grid_LDOS_th.LDOS_fb_th_label !=0 ).mean(["X","Y"]).to_dataframe()
-LDOS_fb_0_1_df = pd.concat( [LDOS_fb_0_df,LDOS_fb_1_df], axis= 1)
-LDOS_fb_0_1_df.columns = ['(Area0)','(Area1)']
-#LDOS_fb_0_1_df
-
-# +
-LDOS_fb_0_df = grid_LDOS_th.LDOS_fb.where( grid_LDOS_th.LDOS_fb_th_label ==0 ).to_dataframe()
-LDOS_fb_0_df= LDOS_fb_0_df.rename( columns ={'LDOS_fb':'LDOS_Area0'})
-LDOS_fb_1_df = grid_LDOS_th.LDOS_fb.where( grid_LDOS_th.LDOS_fb_th_label !=0 ).to_dataframe()
-LDOS_fb_1_df= LDOS_fb_1_df.rename( columns ={'LDOS_fb':'LDOS_Area1'})
-# rename columns 
-
-LDOS_fb_0_1_df = pd.concat( [LDOS_fb_0_df,LDOS_fb_1_df], axis= 1)
-#LDOS_fb_0_1_df = pd.concat( [LDOS_fb_0_df,LDOS_fb_1_df], axis= 1, join='outer')
-
-LDOS_fb_0_1_df = LDOS_fb_0_1_df.reset_index()
-#LDOS_fb_0_1_df
-# -
-
-####################33
-# melt dataframe for avg plot
-#####################
-LDOS_fb_0_1_df_area_df_melt = LDOS_fb_0_1_df.melt(id_vars = ['Y','X', 'bias_mV'], value_vars = ['LDOS_Area0','LDOS_Area1'] )
-LDOS_fb_0_1_df_area_df_melt.columns = ['Y','X','bias_mV', 'Area','LDOS']
-LDOS_fb_0_1_df_area_df_melt
-
-# +
-fig,ax = plt.subplots(ncols = 3, figsize=(9,3))
-isns.imshow (grid_LDOS_th.LDOS_fb_th, ax = ax[0]) 
-ax[0].set_title('Thresholds')
-isns.imshow (grid_LDOS_th.LDOS_fb_th.isnull(), ax = ax[1]) 
-ax[1].set_title('Area Selection 0 or 1')
-
-sns.lineplot(LDOS_fb_0_1_df_area_df_melt,x = 'bias_mV', y = 'LDOS', ax = ax[2], hue = 'Area')
-#sns.lineplot( x  =LDOS_fb__1_df, data = LDOS_fb__1_df, ax = ax[2])
-#sns.lineplot(grid_LDOS_th.LDOS_fb.where( grid_LDOS_th.LDOS_fb_th_label !=0 ).mean(["X","Y"]).to_dataframe(), ax = ax[2], label ='1')
-ax[2].set_title('LDOS at Area 0 or 1')
-plt.tight_layout()
-plt.show()
-# -
-
-
-
-
-
-# # grid_LDOS_pks analysis 
-#
-
-# ### DBSCAN 
-
-grid_LDOS_pks_df.to_csv('Grid Spectroscopy(X0.01)0T_40mK_001_LDOS_pks.cvs')
-
-df =  grid_LDOS_pks_df
-
-# +
-import pandas as pd
-from sklearn.cluster import DBSCAN
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-
-# 데이터 준비
-data = df[['X', 'Y', 'bias_mV']].values
-
-# DBSCAN 파라미터 설정
-eps = 0.01 # 데이터 스케일에 맞게 조정
-min_samples = 5  # 노이즈와 클러스터를 구분하는 역할
-
-# DBSCAN 실행
-dbscan = DBSCAN(eps=eps, min_samples=min_samples).fit(data)
-labels = dbscan.labels_
-
-# +
-# 데이터 준비
-df['label'] = labels
-
-# 인터렉티브 3D 산점도 플롯
-fig = px.scatter_3d(df, x='X', y='Y', z='bias_mV', color='label',
-                    color_continuous_scale='Viridis', opacity=0.05,
-                    hover_name='label', hover_data=['X', 'Y', 'bias_mV'])
-
-# 축 레이블 설정
-fig.update_layout(scene=dict(
-                    xaxis_title='X',
-                    yaxis_title='Y',
-                    zaxis_title='bias_mV'),
-                  width=500, height=500)
-
-# 노이즈 데이터 포인트 별도 표시
-noise_points = df[df['label'] == -1]
-fig.add_trace(go.Scatter3d(x=noise_points['X'], y=noise_points['Y'], z=noise_points['bias_mV'],
-                           mode='markers', marker=dict(color='black', size=1, symbol='x'),
-                           name='Noise'))
-
-fig.show()
-# -
-
-grid_LDOS_pks_df
-
-
-grid_LDOS_pks_df
-
-# +
-
-# Creating a 3D scatter plot using Plotly Express
-# Define the range for the color scale
-color_range = [df['peak_heights'].quantile(0.05), df['peak_heights'].quantile(0.95)]
-
-
-fig = px.scatter_3d(grid_LDOS_pks_df, x='Y', y='X', z='peak_bias', color='peak_heights', 
-                    title='3D Scatter Plot of Y, X, peak_bias with peak_heights as color',
-                    labels={'Y': 'Y', 'X': 'X', 'peak_bias': 'Peak Bias', 'peak_heights': 'Peak peak_heights'},
-                    color_continuous_scale=px.colors.sequential.Viridis, opacity= 0.05,range_color=color_range)
-
-# Show the plot
-fig.show()
-
-# +
-fig, axs = plt.subplots(2, 2, figsize=(15, 12))
-scatter = axs[0, 0].scatter(df['X'], df['Y'], c=df['peak_heights'], cmap='viridis',alpha = 0.3)
-fig.colorbar(scatter, ax=axs[0, 0])
-axs[0, 0].set_title('X-Y plane with bias_mV')
-
-scatter = axs[0, 1].scatter(df['X'], df['Y'], c=df['peak_prominences'], cmap='coolwarm',alpha = 0.3)
-fig.colorbar(scatter, ax=axs[0, 1])
-axs[0, 1].set_title('X-Y plane with peak_prominences')
-
-scatter = axs[1, 0].scatter(df['X'], df['Y'], c=df['peak_widths'], cmap='coolwarm',alpha = 0.3)
-fig.colorbar(scatter, ax=axs[1, 0])
-axs[1, 0].set_title('X-Y plane with peak_widths')
-
-scatter = axs[1, 1].scatter(df['X'], df['Y'], c=df['peak_width_heights'], cmap='coolwarm',alpha = 0.3)
-fig.colorbar(scatter, ax=axs[1, 1])
-axs[1, 1].set_title('X-Y plane with peak_width_heights')
-
-for ax in axs.flat:
-    ax.set(xlabel='X', ylabel='Y')
-    
-plt.tight_layout()
-plt.show()
-
-
-# +
-
-# Create 3D scatter plot
-fig = go.Figure()
-
-# Add traces for each cluster
-for cluster in range(num_clusters):
-    cluster_data = df[df['cluster'] == cluster]
-    fig.add_trace(go.Scatter3d(
-        x=cluster_data['X'],
-        y=cluster_data['Y'],
-        z=cluster_data['peak_bias'],
-        mode='markers',
-        marker=dict(size=5, color=cluster, opacity=0.05),
-        name=f'Cluster {cluster}'
-    ))
-
-# Layout settings
-fig.update_layout(
-    scene=dict(
-        xaxis=dict(title='X-axis'),
-        yaxis=dict(title='Y-axis'),
-        zaxis=dict(title='peak_bias'),
-    ),
-    title='3D Scatter Plot with Clustering',
-    margin=dict(l=0, r=0, b=0, t=10)
-)
-
-# Show interactive plot
-fig.show()
-
-# +
-## PCA analysis and KNN clusterin g
-# -
-
-
-# #### GapMap for SC
-#
-
-grid_LDOS_pks_df
-
-metallic_mask
-
-grid_LDOS_pks_df
-
-# +
-import xarray as xr
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-def create_gapmap_by_max_LDOS(grid_LDOS_pks):
-    # bias_mV의 양수와 음수 부분 나누기
-    bias_negative = grid_LDOS_pks.bias_mV < 0
-    bias_positive = grid_LDOS_pks.bias_mV > 0
-
-    # LDOS_smoothed_pks 값 중 양수와 음수 부분에서 가장 큰 값의 인덱스 찾기
-    ldos_neg = grid_LDOS_pks.LDOS_smoothed_pks.isel(bias_mV=bias_negative)
-    ldos_pos = grid_LDOS_pks.LDOS_smoothed_pks.isel(bias_mV=bias_positive)
-
-    # 각 위치별로 최대값의 인덱스를 찾고, 해당 bias_mV 값 추출
-    cohpk_0Neg = ldos_neg.idxmax(dim='bias_mV')
-    cohpk_0Pos = ldos_pos.idxmax(dim='bias_mV')
-
-    # Gapmap 채널 생성 (두 값의 차이)
-    gapmap = cohpk_0Pos - cohpk_0Neg
-
-    # 새로운 데이터셋 생성
-    new_ds = xr.Dataset({
-        'cohpk_0Neg': cohpk_0Neg,
-        'cohpk_0Pos': cohpk_0Pos,
-        'gapmap': gapmap
-    })
-
-    # 새로운 채널들을 원래 데이터셋에 추가
-    combined_ds = grid_LDOS_pks.merge(new_ds)
-    #mask 추가 
-    
-    # Plotting with seaborn
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-
-    isns.imshow(combined_ds.cohpk_0Neg, ax=axes[0])
-    axes[0].set_title('cohpk_0Neg')
-
-    isns.imshow(combined_ds.cohpk_0Pos, ax=axes[1])
-    axes[1].set_title('cohpk_0Pos')
-
-    isns.imshow(combined_ds.gapmap, ax=axes[2])
-    axes[2].set_title('gapmap')
-
-    plt.tight_layout()
-    plt.show()
-
-    return combined_ds
-
-# 사용 예제
-# grid_LDOS_pks = xr.open_dataset('path_to_your_dataset.nc')
-gapmap_xr = create_gapmap(grid_LDOS_pks)
-print(gapmap_xr)
-# -
-
-
-gapmap_xr
-
-
-gapmap_xr.cohpk_0Pos.plot()
-
-grid_LDOS_zm= grid_LDOS.where(grid_LDOS.bias_mV<2.4,drop=True).where(grid_LDOS.bias_mV>-2.4,drop=True)
-
-
-def find_2deriv_sg_peaks(grid_LDOS, 
-                         ch_name='LDOS',
-                         window_length=15,
-                         window_length1=15,
-                         window_length2=15,
-                         polyorder=5,
-                         polyorder1=4,
-                         polyorder2 = 3,
-                         X_point=10,
-                         Y_point=10,
-                         fnd_pks_distance=None, 
-                         fnd_pks_width=None, 
-                         fnd_pks_threshold=None,
-                         fnd_pks_prominence=None):
-    """
-    Find peaks in the second derivative of the given grid_LDOS.
-
-    Parameters:
-    -----------
-    grid_LDOS : xarray Dataset
-        Input grid_LDOS data.
-    window_length : int, optional
-        Length of the filter window, default is 21.
-    polyorder : int, optional
-        Polynomial order, default is 3.
-    X_point : int, optional
-        X-coordinate point for plotting, default is 10.
-    Y_point : int, optional
-        Y-coordinate point for plotting, default is 10.
-    fnd_pks_distance : int, optional
-        Minimum distance between peaks, default is 10.
-    fnd_pks_width : int, optional
-        Minimum width of peaks, default is 10.
-    fnd_pks_threshold : float, optional
-        Minimum peak height threshold, default is 1E-11.
-    fnd_pks_prominence : float, optional
-        Minimum peak prominence, default is 2E-11.
-
-    Returns:
-    --------
-    grid_LDOS_pks : xarray Dataset
-        Dataset containing information about peaks in the second derivative
-    ################################
-    # as for a final return,  
-    # LDOS_fb :(Y, X, bias_mV) original 
-    # LDOS_fb_sg :(Y, X, bias_mV) original + sg 
-    # LDOS_2deriv_sg : (Y, X, bias_mV) 2nd derivative of original + sg 
-    # LDOS_fb_peaks_pad: (X, Y, peaks)  list of peak points 
-    # LDOS_fb_peaks_mV: (Y, X, bias_mV) boolean of peak positions (True/False) --> multiply bias_mV to obtain peak positions
-    # LDOS_fb_pk_mV: (Y, X, bias_mV) (origianl) LDOS value at the peak position 
-    ################################
-
-    """
-    '''window_length
-    window_length1 = window_length +4
-    window_length2 = window_length +8
-    polyorder
-    polyorder1 = polyorder +0 
-    polyorder2 = polyorder +0'''
-    # Smoothing and differentiation to find peaks
-    grid_LDOS_sg = savgolFilter_xr(grid_LDOS, window_length=window_length, polyorder=polyorder)
-    grid_LDOS_1deriv = grid_LDOS_sg.differentiate('bias_mV')
-    grid_LDOS_1deriv_sg = savgolFilter_xr(grid_LDOS_1deriv, window_length=window_length1, polyorder=polyorder1)
-    grid_LDOS_2deriv = grid_LDOS_1deriv_sg.differentiate('bias_mV')
-    grid_LDOS_2deriv_sg = savgolFilter_xr(grid_LDOS_2deriv, window_length=window_length2, polyorder=polyorder2)
-    grid_LDOS_2deriv_sg_dps = find_peaks_xr(-1 * grid_LDOS_2deriv_sg, distance=fnd_pks_distance,
-                                             width=fnd_pks_width, threshold=fnd_pks_threshold,
-                                             prominence=fnd_pks_prominence)
-    grid_LDOS_2deriv_sg_dps_pad = peak_pad(grid_LDOS_2deriv_sg_dps)
-    print (grid_LDOS_2deriv_sg_dps_pad)
-    grid_LDOS_2deriv_sg_dps_pad_mV = peak_mV_3Dxr(grid_LDOS_2deriv_sg_dps_pad, ch=ch_name)
-
-    # Calculate peak values
-    grid_LDOS_pks = grid_LDOS_2deriv_sg_dps_pad_mV.copy()
-    grid_LDOS_pks['LDOS_pk_mV'] = (grid_LDOS_2deriv_sg_dps_pad_mV.LDOS_peaks_mV * grid_LDOS[ch_name]).astype(float)
-    grid_LDOS_pks[ch_name].values = grid_LDOS[ch_name].values
-    grid_LDOS_pks['LDOS_sg'] = grid_LDOS_sg[ch_name].copy()
-    grid_LDOS_pks['LDOS_2deriv'] = grid_LDOS_2deriv[ch_name].copy()
-    grid_LDOS_pks['LDOS_2deriv_sg'] = grid_LDOS_2deriv_sg[ch_name].copy()
-
-    # Plotting
-    fig, axs = plt.subplots(ncols=2, figsize=(8, 4))
-    grid_LDOS_pks[ch_name].isel(X=X_point, Y=Y_point).plot(ax=axs[0], color='k')
-    grid_LDOS_pks.LDOS_sg.isel(X=X_point, Y=Y_point).plot(ax=axs[0], color='orange')
-    grid_LDOS_pks[ch_name].where(grid_LDOS_pks.LDOS_pk_mV).isel(X=X_point, Y=Y_point).plot.scatter(ax=axs[0],
-                                                                                                       x='bias_mV',
-                                                                                                       y='LDOS',
-                                                                                                       color='b')
-    axs[0].set_ylabel('LDOS')
-
-    grid_LDOS_pks.LDOS_2deriv.isel(X=X_point, Y=Y_point).plot(ax=axs[1], color='k')
-    grid_LDOS_pks.LDOS_2deriv_sg.isel(X=X_point, Y=Y_point).plot(ax=axs[1], color='b')
-    grid_LDOS_pks.LDOS_2deriv_sg.where(grid_LDOS_pks.LDOS_pk_mV).isel(X=X_point, Y=Y_point).plot.scatter(
-        ax=axs[1], x='bias_mV', y='LDOS_2deriv_sg')
-    axs[1].set_ylabel('LDOS (2nd derivative)')
-
-    fig.tight_layout()
-    plt.rcParams.update({'font.size': 10})
-    plt.show()
-
-    return grid_LDOS_pks
-
-
-# ### PCA analysis for SC gap  and extract gapmap for SC by using SC  
-
-def PCA_for_SC_gap(grid_LDOS_pks_df,
-                   n_clusters=7):
-    """
-    Perform Principal Component Analysis (PCA) followed by K-Means clustering
-    to identify superconducting (SC) gaps in a dataset.
-
-    Parameters:
-    -----------
-    grid_LDOS_pks_df : pandas DataFrame
-        DataFrame containing the data points to be analyzed.
-
-    n_clusters : int, optional
-        Number of clusters for K-Means clustering. Default is 6.
-
-    Returns:
-    --------
-    grid_LDOS_pks_df : pandas DataFrame
-        DataFrame with an additional column 'PCA_labels' containing cluster labels.
-
-    Example:
-    --------
-    >>> import pandas as pd
-    >>> from PCA_for_SC_gap import PCA_for_SC_gap
-    
-    # Assuming grid_LDOS_pks_df is a pandas DataFrame containing the data
-    # Call the function with the DataFrame
-    >>> result_df = PCA_for_SC_gap(grid_LDOS_pks_df)
-    
-    # 'result_df' now contains an additional column 'PCA_labels' with cluster labels
-    # grid_LDOS_pks_df_pca = PCA_for_SC_gap( grid_LDOS_pks_df)
-    # Further operations can be performed based on the clustering results.
-    """
-    import numpy as np
-    import plotly.graph_objects as go
-    from sklearn.decomposition import PCA
-    from sklearn.cluster import KMeans
-
-    # Extract data from DataFrame
-    X = grid_LDOS_pks_df.to_numpy()
-
-    # Perform PCA to reduce dimensionality to 2D
-    pca = PCA(n_components=3)
-    X_pca = pca.fit_transform(X)
-
-    # Initialize K-Means clustering
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-
-    # Train the model
-    kmeans.fit(X_pca)
-
-    # Get cluster labels
-    labels = kmeans.labels_
-
-    # Plot 2D Scatter Plot (PCA)
-    fig = go.Figure()
-
-    # Add data points for each cluster with different colors
-    for cluster_num in range(n_clusters):
-        cluster_points = X_pca[labels == cluster_num]
-        fig.add_trace(go.Scatter(
-            x=cluster_points[:, 0],
-            y=cluster_points[:, 1],
-            mode='markers',
-            marker=dict(size=8, opacity=0.8),
-            name=f'Cluster {cluster_num}'
-        ))
-
-    # Add cluster centers
-    centers_pca = kmeans.cluster_centers_
-    fig.add_trace(go.Scatter(
-        x=centers_pca[:, 0],
-        y=centers_pca[:, 1],
-        mode='markers',
-        marker=dict(size=5, color='red', opacity=0.4),
-        name='Cluster Centers'
-    ))
-
-    # Set layout
-    fig.update_layout(
-        xaxis_title='Principal Component 1',
-        yaxis_title='Principal Component 2',
-        title='K-Means Clustering in 2D (PCA)',
-        showlegend=True
-    )
-
-    # Show interactive plot
-    fig.show()
-
-    # Perform PCA inverse transform
-    X_pca_inverse = pca.inverse_transform(X_pca)
-
-    # Assign cluster labels to the DataFrame
-    grid_LDOS_pks_df['PCA_labels'] = labels
-
-    # Return the DataFrame with added 'PCA_labels' column
-    return grid_LDOS_pks_df
-
-
-grid_LDOS_pks_df_pca = PCA_for_SC_gap( grid_LDOS_pks_df,n_clusters = 7)
-
-extract_gap_map(grid_LDOS_pks_df_pca,pk_labl_Neg =6,pk_labl_Pos =2)
-
-# +
-import pandas as pd
-
-def extract_gap_map(grid_LDOS_pks_df_pca,pk_labl_Neg =1,pk_labl_Pos =2):
-    """
-    Extracts the superconducting (SC) gap map from preprocessed data.
-    """
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    
-    # Calculate bias step
-    bias_mV_step = np.unique(grid_LDOS.bias_mV[1:].values - grid_LDOS.bias_mV[:-1].values)[0]
-    
-    # Filter data for each coherent peak and remove duplicates based on X, Y, LDOS_fb_peaks_pad
-    grid_LDOS_pks_df_coherentPK_0 = grid_LDOS_pks_df_pca[grid_LDOS_pks_df_pca.PCA_labels == pk_labl_Neg].drop_duplicates(subset=['X', 'Y'], keep='first').drop(columns=['PCA_labels'])
-    grid_LDOS_pks_df_coherentPK_1 = grid_LDOS_pks_df_pca[grid_LDOS_pks_df_pca.PCA_labels == pk_labl_Pos].drop_duplicates(subset=['X', 'Y'], keep='first').drop(columns=['PCA_labels'])
-    
-    # Convert data to 2D grid
-    grid_LDOS_pks_df_coherentPK_0_2D = grid_LDOS_pks_df_coherentPK_0.pivot(index='X', columns='Y', values='LDOS_peaks_pad') * bias_mV_step + grid_LDOS.bias_mV.values[0]
-    grid_LDOS_pks_df_coherentPK_1_2D = grid_LDOS_pks_df_coherentPK_1.pivot(index='X', columns='Y', values='LDOS_peaks_pad') * bias_mV_step + grid_LDOS.bias_mV.values[0]
-    
-    # Calculate SC gap map
-    grid_LDOS_pks_df_coherentPK_Gapmap_2D = (grid_LDOS_pks_df_coherentPK_1_2D - grid_LDOS_pks_df_coherentPK_0_2D).abs()
-    
-    # Concatenate data into a single DataFrame
-    grid_LDOS_pks_df_Gapmap = pd.concat([grid_LDOS_pks_df_coherentPK_0_2D.unstack().rename('SC_coherence_del0'),
-                                          grid_LDOS_pks_df_coherentPK_1_2D.unstack().rename('SC_coherence_del1'),
-                                          grid_LDOS_pks_df_coherentPK_Gapmap_2D.unstack().rename('SC_coherence_2delta')],
-                                         axis=1)
-    
-    # Create subplots for each map
-    fig, axs = plt.subplots(ncols=3, figsize=(8, 3))
-    isns.imshow(grid_LDOS_pks_df_coherentPK_0_2D, ax=axs[0])
-    axs[0].set_title('+$\Delta$')
-    isns.imshow(grid_LDOS_pks_df_coherentPK_1_2D, ax=axs[1])
-    axs[1].set_title('-$\Delta$')
-    isns.imshow(grid_LDOS_pks_df_coherentPK_Gapmap_2D, ax=axs[2])
-    axs[2].set_title('2$\Delta$')
-    fig.tight_layout()
-    
-    return grid_LDOS_pks_df_Gapmap, fig
-
-
-# +
-from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-data = grid_LDOS_pks_df
-# PCA 수행 (3개의 주성분을 추출)
-pca = PCA(n_components=3)
-principal_components = pca.fit_transform(data)
-
-# PCA 결과를 데이터 프레임으로 변환
-pca_df = pd.DataFrame(data=principal_components, columns=['PC1', 'PC2', 'PC3'])
-import plotly.graph_objs as go
-
-# 3D 산점도 생성
-scatter = go.Scatter3d(
-    x=pca_df['PC1'],
-    y=pca_df['PC2'],
-    z=pca_df['PC3'],
-    mode='markers',
-    marker=dict(
-        color='red',
-        size=5,
-        symbol='circle'
-    )
-)
-
-# 레이아웃 설정
-layout = go.Layout(
-    scene=dict(
-        xaxis=dict(title='Principal Component 1'),
-        yaxis=dict(title='Principal Component 2'),
-        zaxis=dict(title='Principal Component 3')
-    ),
-    title='3D PCA Visualization'
-)
-
-# 그래프 객체 생성
-fig = go.Figure(data=[scatter], layout=layout)
-
-# 그래프 출력
-fig.show()
-# -
-
-
-pca_df
-
-extract_gap_map(grid_LDOS_pks_df_pca,pk_labl_Neg =1,pk_labl_Pos =2)
-
-
-def extract_gap_map(grid_LDOS_pks_df_pca,pk_labl_Neg =1,pk_labl_Pos =2):
-    """
-    Extracts the superconducting (SC) gap map from preprocessed data.
-
-    Parameters:
-    -----------
-    grid_LDOS_pks_df_pca : pandas DataFrame
-        DataFrame containing preprocessed data with PCA cluster labels.
-
-    Returns:
-    --------
-    grid_LDOS_pks_df_Gapmap : pandas DataFrame
-        DataFrame containing SC gap map.
-
-    fig : matplotlib Figure
-        Matplotlib Figure object containing three subplots: 
-        +$\Delta$ map, -$\Delta$ map, and 2$\Delta$ map.
-
-    Example:
-    --------
-    >>> import matplotlib.pyplot as plt
-    >>> import seaborn as sns
-    >>> from extract_gap_map import extract_gap_map
-    
-    # Assuming grid_LDOS_pks_df_pca is a pandas DataFrame containing preprocessed data
-    # Call the function to extract the SC gap map
-    >>> grid_LDOS_pks_df_Gapmap, fig = extract_gap_map(grid_LDOS_pks_df_pca)
-    # or 
-    >>> grid_LDOS_pks_df_Gapmap, _ = extract_gap_map(grid_LDOS_pks_df_pca)
-    
-    # Show the extracted gap map and plots
-    >>> plt.show(fig)
-    
-    # 'grid_LDOS_pks_df_Gapmap' contains the SC gap map for further analysis.
-    """
-    import numpy as np
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    # Calculate bias step
-    bias_mV_step = np.unique(grid_LDOS.bias_mV[1:].values - grid_LDOS.bias_mV[:-1].values)[0]
-
-    # Filter data for each coherent peak
-    grid_LDOS_pks_df_coherentPK_0 = grid_LDOS_pks_df_pca[grid_LDOS_pks_df_pca.PCA_labels == pk_labl_Neg].drop(columns=['PCA_labels'])
-    grid_LDOS_pks_df_coherentPK_1 = grid_LDOS_pks_df_pca[grid_LDOS_pks_df_pca.PCA_labels == pk_labl_Pos].drop(columns=['PCA_labels'])
-
-    # Convert data to 2D grid
-    grid_LDOS_pks_df_coherentPK_0_2D = grid_LDOS_pks_df_coherentPK_0.pivot(index='X',
-                                                                             columns='Y',
-                                                                             values='LDOS_peaks_pad') * bias_mV_step + grid_LDOS.bias_mV.values[0]
-    grid_LDOS_pks_df_coherentPK_1_2D = grid_LDOS_pks_df_coherentPK_1.pivot(index='X',
-                                                                             columns='Y',
-                                                                             values='LDOS_peaks_pad') * bias_mV_step + grid_LDOS.bias_mV.values[0]
-
-    # Calculate SC gap map
-    grid_LDOS_pks_df_coherentPK_Gapmap_2D = (grid_LDOS_pks_df_coherentPK_1_2D - grid_LDOS_pks_df_coherentPK_0_2D).abs()
-
-    # Concatenate data into a single DataFrame
-    grid_LDOS_pks_df_Gapmap = pd.concat([grid_LDOS_pks_df_coherentPK_0_2D.unstack().rename('SC_coherence_del0'),
-                                          grid_LDOS_pks_df_coherentPK_1_2D.unstack().rename('SC_coherence_del1'),
-                                          grid_LDOS_pks_df_coherentPK_Gapmap_2D.unstack().rename('SC_coherence_2delta')],
-                                         axis=1)
-
-    # Create subplots for each map
-    fig, axs = plt.subplots(ncols=3, figsize=(8, 3))
-    isns.imshow(grid_LDOS_pks_df_coherentPK_Neg_2D, ax=axs[0])
-    axs[0].set_title('+$\Delta$')
-    isns.imshow(grid_LDOS_pks_df_coherentPK_Pos_2D, ax=axs[1])
-    axs[1].set_title('-$\Delta$')
-    isns.imshow(grid_LDOS_pks_df_coherentPK_Gapmap_2D, ax=axs[2])
-    axs[2].set_title('2$\Delta$')
-
-    fig.tight_layout()
-
-    return grid_LDOS_pks_df_Gapmap, fig
-
-
-# +
-pk_labl_Neg =1
-pk_labl_Pos =2
-
-# Calculate bias step
-bias_mV_step = np.unique(grid_LDOS.bias_mV[1:].values - grid_LDOS.bias_mV[:-1].values)[0]
-
-# Filter data for each coherent peak
-grid_LDOS_pks_df_coherentPK_0 = grid_LDOS_pks_df_pca[grid_LDOS_pks_df_pca.PCA_labels == pk_labl_Neg].drop(columns=['PCA_labels'])
-grid_LDOS_pks_df_coherentPK_1 = grid_LDOS_pks_df_pca[grid_LDOS_pks_df_pca.PCA_labels == pk_labl_Pos].drop(columns=['PCA_labels'])
-grid_LDOS_pks_df_coherentPK_0
-# -
-
-# Filter data for each coherent peak
-grid_LDOS_pks_df_coherentPK_0 = grid_LDOS_pks_df_pca[grid_LDOS_pks_df_pca.PCA_labels == pk_labl_Neg]
-grid_LDOS_pks_df_coherentPK_1 = grid_LDOS_pks_df_pca[grid_LDOS_pks_df_pca.PCA_labels == pk_labl_Pos]
-grid_LDOS_pks_df_coherentPK_0
-
-grid_LDOS_pks_df_coherentPK_1.iloc[:400,:].pivot(index='X',columns='Y',
-                                                 values='LDOS_peaks_pad')
-
-# +
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import xarray as xr
-from lmfit.models import LorentzianModel, GaussianModel, VoigtModel, ConstantModel
-from functools import reduce
-
-def plot_region_fitting_result_from_dsfit(
-        ds_fit,
-        model_type=None,
-        allowed_models=['Lorentzian', 'Gaussian', 'Voigt'],
-        y_idx=None, x_idx=None,
-        weight_function_show=False,
-        use_zb_mask=False,
-        zb_mask_key='ZB_mask',
-        show_shade=True,
-        return_fig=False):
-    """
-    Reconstruct and plot the best-fit curve for a selected pixel from a combined dataset,
-    including optional CdGM level proximity and guide lines, and collect all curves into a pandas DataFrame.
-
-    Parameters
-    ----------
-    ds_fit : xarray.Dataset
-        Combined dataset with dims (Y, X, bias_mV, peak) containing:
-          - Variables: 
-              • 'bias_mV' (axis values)  
-              • 'LDOS' (data to fit)  
-              • 'peak_center', 'peak_amplitude', 'peak_sigma', 'redchi'  
-          - Optional Variables: 
-              • 'background_value'  
-              • 'model_type'  
-              • zb_mask_key (e.g. 'ZB_mask')  
-          - Attributes:
-              • 'weight_sigma'  
-              • 'Ef' (Fermi energy)  
-              • 'SCgap' (superconducting gap)  
-    model_type : {None, str}, optional
-        If None, uses per-pixel model from ds_fit['model_type']; 
-        else forces the given model (must be in allowed_models).
-    allowed_models : list of str, optional
-        Supported models when model_type is None.
-    y_idx, x_idx : int, optional
-        Pixel indices. If None and use_zb_mask=True, picks a random valid pixel.
-    weight_function_show : bool, default False
-        If True, plot also the convoluted fit and weight function.
-    use_zb_mask : bool, default False
-        If True, applies zb_mask_key to bias-axis masking.
-    zb_mask_key : str, default 'ZB_mask'
-        Name of zero-bias mask variable in ds_fit.
-    show_shade : bool, default True
-        If True, plot CdGM level proximity lines and shading under peaks.
-        If False, restrict x-axis to valid-bias region only.
-    return_fig : bool, default False
-        If True, return (fig, df); else show plot and return df.
-
-    Returns
-    -------
-    df : pandas.DataFrame
-        Indexed by bias_mV, columns include:
-          - 'LDOS', 'best_fit', 'peak0'… , 'bkg' (if present),
-            'convoluted_fit', 'weight_function' (if requested)
-    fig : matplotlib.figure.Figure, optional
-        Returned if return_fig=True.
-    """
-    # 1) Determine pixel indices
-    ny, nx = ds_fit.dims['Y'], ds_fit.dims['X']
-    if use_zb_mask and y_idx is None and x_idx is None and zb_mask_key in ds_fit:
-        raw_mask = ds_fit[zb_mask_key].values
-        valid_mask = np.any(~np.isnan(raw_mask), axis=2) if raw_mask.ndim == 3 else raw_mask.astype(bool)
-        rc = ds_fit['redchi'].values
-        valid_fit = ~np.isnan(rc)
-        ys, xs = np.where(valid_mask & valid_fit)
-        if len(ys) == 0:
-            raise RuntimeError("No valid pixel found with ZB mask and redchi")
-        sel = np.random.randint(len(ys))
-        y_idx, x_idx = int(ys[sel]), int(xs[sel])
-    if y_idx is None:
-        y_idx = np.random.randint(ny)
-    if x_idx is None:
-        x_idx = np.random.randint(nx)
-
-    print(f"Using pixel Y={y_idx}, X={x_idx} for plotting")
-
-    # 2) Extract data
-    bias = ds_fit['bias_mV'].values
-    ldos = ds_fit['LDOS'].isel(Y=y_idx, X=x_idx).values
-
-    # 3) Model selection
-    if model_type is None:
-        chosen = ds_fit['model_type'].isel(Y=y_idx, X=x_idx).item().capitalize()
-    else:
-        chosen = model_type.capitalize()
-    if chosen not in allowed_models:
-        raise ValueError(f"Model '{chosen}' not supported. Choose from {allowed_models}.")
-    if chosen == 'Lorentzian':
-        mc, fit_color = LorentzianModel, 'r'
-    elif chosen == 'Gaussian':
-        mc, fit_color = GaussianModel, 'b'
-    else:
-        mc, fit_color = VoigtModel, 'g'
-
-    # 4) Bias mask
-    mask = np.ones_like(bias, bool)
-    if use_zb_mask and zb_mask_key in ds_fit:
-        raw = ds_fit[zb_mask_key].isel(Y=y_idx, X=x_idx).values
-        if isinstance(raw, np.ndarray) and raw.shape == bias.shape:
-            mask = ~np.isnan(raw) if np.issubdtype(raw.dtype, np.floating) else raw.astype(bool)
-        elif np.ndim(raw) == 0:
-            mask = np.full_like(bias, bool(raw), bool)
-    mask = mask.astype(bool)
-
-    # 5) Load fit parameters
-    redchi = ds_fit['redchi'].isel(Y=y_idx, X=x_idx).item()
-    n_peaks = ds_fit.dims['peak']
-    centers = ds_fit['peak_center'].isel(Y=y_idx, X=x_idx).values
-    amps    = ds_fit['peak_amplitude'].isel(Y=y_idx, X=x_idx).values
-    sigmas  = ds_fit['peak_sigma'].isel(Y=y_idx, X=x_idx).values
-    idxs = [i for i in range(n_peaks)
-            if not (np.isnan(centers[i]) or np.isnan(amps[i]) or np.isnan(sigmas[i]))]
-    print("Valid peak indices:", idxs)
-
-    # 6) Construct composite model
-    models = []
-    if 'background_value' in ds_fit:
-        models.append(ConstantModel(prefix='bkg_'))
-        bgv = ds_fit['background_value'].isel(Y=y_idx, X=x_idx).item()
-    for i in idxs:
-        models.append(mc(prefix=f'peak{i}_'))
-    comp = reduce(lambda a, b: a + b, models)
-    params = comp.make_params()
-    if 'background_value' in ds_fit:
-        params['bkg_c'].set(value=bgv)
-    for i in idxs:
-        params[f'peak{i}_center'].set(value=centers[i])
-        params[f'peak{i}_amplitude'].set(value=amps[i])
-        params[f'peak{i}_sigma'].set(value=sigmas[i])
-
-    # 7) Evaluate fit & components
-    best_fit  = comp.eval(params=params, x=bias)
-    comps_vals = comp.eval_components(params=params, x=bias)
-
-    # 8) Optional weight convolution
-    if weight_function_show:
-        wsig = ds_fit.attrs.get('weight_sigma', 1.0)
-        wfunc = np.exp(-bias**2 / (2 * wsig**2))
-        conv = np.convolve(best_fit, wfunc, mode='same') / np.sum(wfunc)
-
-    # 9) Plot
-    fig, ax = plt.subplots(figsize=(7,5))
-    ax.plot(bias, ldos, 'k-', lw=1.5, alpha=0.8, label='LDOS', zorder=1)
-    ax.plot(bias, best_fit, fit_color+'-', lw=4, alpha=1.0,
-            label=f"{chosen} Fit (redchi={redchi:.2e})", zorder=10)
-    if weight_function_show:
-        ax.plot(bias, conv, fit_color+'-', lw=3, alpha=0.8, label='Convoluted Fit', zorder=9)
-        ax2 = ax.twinx()
-        ax2.plot(bias, wfunc, '--', lw=1.5, alpha=0.5, color='gray', label='Weight Function')
-        ax2.set_ylabel('Weight Function', color='gray')
-    for i in idxs:
-        ax.plot(bias, comps_vals[f'peak{i}_'], '--', lw=1.5, alpha=0.4,
-                label=f'Peak {i}', zorder=2)
-    if 'bkg_' in comps_vals:
-        ax.plot(bias, comps_vals['bkg_'], '--', lw=1.5, alpha=0.4,
-                color='gray', label='Background', zorder=2)
-
-    # CdGM levels & shading
-    if show_shade:
-        lvl_prox = ds_fit['level_proximity'].isel(Y=y_idx, X=x_idx).values
-        Ef = ds_fit.attrs.get('Ef', 1.0)
-        SCgap = ds_fit.attrs.get('SCgap', 1.0)
-        E_mu = SCgap**2 / Ef
-        for i in idxs:
-            lp = lvl_prox[i]
-            if not np.isnan(lp) and abs(lp) < SCgap:
-                if lp == 0:
-                    lc, ls, fill = 'gray', '-', True
-                else:
-                    frac = abs((lp/E_mu) % 1)
-                    frac = 1 - frac if frac > 0.5 else frac
-                    if np.isclose(frac, 0, atol=1e-2):
-                        lc, ls, fill = 'cyan', '--', True
-                    elif np.isclose(frac, 0.5, atol=1e-2):
-                        lc, ls, fill = 'magenta', '--', True
-                    else:
-                        lc, ls, fill = 'gray', '--', False
-                ax.axvline(lp, color=lc, linestyle=ls, linewidth=1)
-                if fill:
-                    ax.fill_between(bias, comps_vals[f'peak{i}_'], color=lc, alpha=0.3)
-        cand = []
-        nmin = int(np.floor(bias.min()/E_mu))
-        nmax = int(np.ceil(bias.max()/E_mu))
-        for n in range(nmin, nmax+1):
-            for lvl in (n*E_mu, (n+0.5)*E_mu):
-                if abs(lvl) < SCgap:
-                    cand.append(lvl)
-        for lvl in sorted(cand):
-            frac = abs((lvl/E_mu) % 1)
-            frac = 1 - frac if frac > 0.5 else frac
-            if np.isclose(frac, 0, atol=1e-2):
-                col, lab = 'cyan', 'Integer CdGM Level'
-            elif np.isclose(frac, 0.5, atol=1e-2):
-                col, lab = 'magenta', 'Half-Integer CdGM Level'
-            else:
-                col, lab = 'gray', None
-            ax.axvline(lvl, color=col, ls='--', lw=1, label=lab)
-    else:
-        valid_bias = bias[mask]
-        if valid_bias.size > 0:
-            ax.set_xlim(valid_bias.min(), valid_bias.max())
-
-    ax.axvline(0, color='gray', ls='-', lw=1)
-    ax.set_xlabel('Bias (mV)')
-    ax.set_ylabel('LDOS')
-
-    # Title with pixel indices and physical coordinates
-    y_phys = ds_fit['Y'].isel(Y=y_idx).item() * 1e9
-    x_phys = ds_fit['X'].isel(X=x_idx).item() * 1e9
-    ax.set_title(
-        f'Y_idx={y_idx}, X_idx={x_idx}, model={chosen}\n'
-        f'Y={y_phys:.2f} nm, X={x_phys:.2f} nm',
-        fontsize=10
-    )
-
-    # Legend
-    if weight_function_show:
-        h1, l1 = ax.get_legend_handles_labels()
-        h2, l2 = ax2.get_legend_handles_labels()
-        ax.legend(h1 + h2, l1 + l2, loc='upper left')
-    else:
-        h, l = ax.get_legend_handles_labels()
-        unique = dict(zip(l, h))
-        ax.legend(unique.values(), unique.keys(), loc='best')
-
-    plt.tight_layout()
-
-    # Collect into DataFrame
-    data = {'LDOS': ldos, 'best_fit': best_fit}
-    for name, arr in comps_vals.items():
-        data[name.rstrip('_')] = arr
-    if weight_function_show:
-        data['convoluted_fit'] = conv
-        data['weight_function'] = wfunc
-    df = pd.DataFrame(data, index=bias)
-    df.index.name = 'bias_mV'
-
-    if return_fig:
-        return fig, df
-    else:
-        plt.show()
-        return df
-
-
 

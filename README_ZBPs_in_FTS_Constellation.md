@@ -1,9 +1,8 @@
-# Supporting Data and Analysis Code for
-# “Deciphering Majorana Zero Modes in Topological Superconductor FeTe0.55Se0.45 with Machine-Learning-Assisted Spectral Deconvolution”
+# STM/S Grid LDOS Data and Analysis Code for Deciphering Majorana Zero Modes in Topological Superconductor
 
 ## Dataset title
 
-Supporting Data and Analysis Code for “Deciphering Majorana Zero Modes in Topological Superconductor FeTe0.55Se0.45 with Machine-Learning-Assisted Spectral Deconvolution”
+STM/S Grid LDOS Data and Analysis Code for Deciphering Majorana Zero Modes in Topological Superconductor
 
 ## Authors
 
@@ -16,7 +15,7 @@ Corresponding authors:
 
 ## Dataset DOI
 
-[DOI TO BE INSERTED UPON PUBLICATION]
+https://doi.org/10.13139/ORNLNCCS/3377533
 
 ## Related manuscript
 

@@ -1964,7 +1964,7 @@ def compare_cropped_large_and_small_area(cropped_large_area, small_area, perc=(2
         cropped_large_area (xarray.Dataset): The large field of view dataset (cropped).
         small_area (xarray.Dataset): The smaller field of view dataset.
         perc (tuple): Percentile for robust scaling (default=(2, 98)).
-        bㅊias_mV_ref (float): Bias voltage for selecting the slice, ignored for 2D data.
+        bias_mV_ref (float): Bias voltage for selecting the slice, ignored for 2D data.
         channel (str): Data channel to plot (default='LDOS').
         alpha_large (float): Transparency level for the large FOV (default=0.5).
         alpha_small (float): Transparency level for the small FOV (default=1).
@@ -2383,7 +2383,7 @@ def plot_LDOS_map_and_profile(dataset, selected_points, ch='LDOS_smoothed', bias
         ldos_interpolated.append(profile)
     ldos_interpolated = np.array(ldos_interpolated).T  # Transpose to shape (distance, bias_mV)
 
-    # --- 변경된 거리 계산: 시작점↔끝점 전체 길이를 기준으로 비율 분할 ---
+    # --- Modified distance calculation: divide proportionally based on the total start<->end length ---
     # start and end coordinates (m)
     x0 = dataset['X'].values[start_point_index[1]]
     y0 = dataset['Y'].values[start_point_index[0]]
@@ -2392,7 +2392,7 @@ def plot_LDOS_map_and_profile(dataset, selected_points, ch='LDOS_smoothed', bias
     total_dist_m = np.sqrt((x1 - x0)**2 + (y1 - y0)**2)
 
     num_pts = len(rr)
-    # 전체 거리만큼 0→total 거리로 균등 분할하여 각 포인트 위치 결정 (nm 단위)
+    # Determine each point's position by evenly dividing the total distance from 0 -> total (in nm)
     actual_distance = np.linspace(0, total_dist_m * 1e9, num_pts)
 
     # Convert the interpolation result to an xarray Dataset.
@@ -3242,7 +3242,7 @@ def plot_LDOS_map_and_profile_v3(dataset, selected_points, ch='LDOS_smoothed', b
     from skimage.transform import rotate
     from scipy.interpolate import interp1d
 
-    # 1. 정렬
+    # 1. Sort
     if dataset['bias_mV'].values[0] > dataset['bias_mV'].values[-1]:
         dataset = dataset.sortby('bias_mV')
 
@@ -3341,7 +3341,7 @@ def plot_LDOS_map_and_profile_v3(dataset, selected_points, ch='LDOS_smoothed', b
 
     cropped_rotated, width_px = rotate_and_crop_rectangle(dataset, selected_points, width_nm, ch, bias_mV_ref)
 
-    # ===== 시각화 =====
+    # ===== Visualization =====
     fig, axs = plt.subplots(1, 3, figsize=(18, 6))
 
     # (1) Map
@@ -3394,7 +3394,7 @@ def plot_LDOS_map_and_profile_v3(dataset, selected_points, ch='LDOS_smoothed', b
     from matplotlib.patches import Polygon
     from skimage.transform import rotate
 
-    # 1. 정렬
+    # 1. Sort
     if dataset['bias_mV'].values[0] > dataset['bias_mV'].values[-1]:
         dataset = dataset.sortby('bias_mV')
 
@@ -3412,7 +3412,7 @@ def plot_LDOS_map_and_profile_v3(dataset, selected_points, ch='LDOS_smoothed', b
     end_idx = (np.abs(y_coords - y1).argmin(), np.abs(x_coords - x1).argmin())
     rr_u, cc_u = skimage.draw.line(start_idx[0], start_idx[1], end_idx[0], end_idx[1])
 
-    # 2. Line profile 계산
+    # 2. Compute line profile
     def compute_uniform_ldos_profile(ldos_array, rr, cc, width):
         half_w = width // 2
         n_bias = ldos_array.sizes['bias_mV']
@@ -3433,7 +3433,7 @@ def plot_LDOS_map_and_profile_v3(dataset, selected_points, ch='LDOS_smoothed', b
     profile = compute_uniform_ldos_profile(ch_data, rr_u, cc_u, line_width_px)
     proj_dist = np.linspace(0, line_length * 1e9, len(rr_u))
 
-    # 3. 회전 Crop 이미지 계산
+    # 3. Compute rotated crop image
     def get_rectangle_corners(x0, y0, x1, y1, width_nm):
         dx, dy = x1 - x0, y1 - y0
         nx, ny = -dy, dx
@@ -3473,7 +3473,7 @@ def plot_LDOS_map_and_profile_v3(dataset, selected_points, ch='LDOS_smoothed', b
         center_rotated = rot_matrix @ shift + np.array(rotated_img.shape) / 2
 
         width_px = int(width_nm / dx_nm)
-        height_px = len(rr_u)  # ← 수정: 실제 line 길이와 일치하게
+        height_px = len(rr_u)  # <- fix: to match the actual line length
         y_min = int(center_rotated[0] - height_px / 2)
         y_max = int(center_rotated[0] + height_px / 2)
         x_min = int(center_rotated[1] - width_px / 2)
@@ -3483,7 +3483,7 @@ def plot_LDOS_map_and_profile_v3(dataset, selected_points, ch='LDOS_smoothed', b
 
     cropped_rotated, width_px = rotate_and_crop_rectangle(dataset, selected_points, width_nm, ch, bias_mV_ref)
 
-    # 4. 시각화
+    # 4. Visualize
     fig = plt.figure(figsize=(6, 14), constrained_layout=True)
     gs = GridSpec(3, 1, height_ratios=[1.2, 1, 1], figure=fig)
     ax1 = fig.add_subplot(gs[0])
@@ -3530,12 +3530,12 @@ def plot_LDOS_map_and_profile_v3(dataset, selected_points, ch='LDOS_smoothed', b
     ax2.set_title(f"LDOS Profile")# (line width = {line_width_px})")
     fig.colorbar(im2, ax=ax2, orientation='vertical', fraction=0.035, pad=0.01, label='LDOS')
 
-    # (3) Cropped Rotated LDOS — 이제는 aspect='equal'로 정확히 설정됨
+    # (3) Cropped Rotated LDOS - now correctly set with aspect='equal'
     im3 = ax3.imshow(cropped_rotated, cmap=LDOS_cmap, origin='lower',
                      vmin=vmin_map, vmax=vmax_map, aspect='equal')
     ax3.axvline(x=width_px // 2, color='white', linestyle='--', lw=1)
     #ax3.set_title(f"Cropped Rotated LDOS (width = {width_nm} nm)")
-    # 5. 결과 반환
+    # 5. Return result
     interpolated_ds = xr.Dataset(
         {"LDOS_interpolated": (["distance", "bias_mV"], profile)},
         coords={"distance": proj_dist, "bias_mV": bias_vals}
@@ -3554,8 +3554,8 @@ fig, interpolated_ds1 = plot_LDOS_map_and_profile_v3(
     LP_perc=(0, 65),
     scalebar_length_nm=20,
     scalebar_color='white',
-    line_width_px=1,           # 또는 1
-    width_nm=10                # crop용 rectangle 너비
+    line_width_px=1,           # or 1
+    width_nm=10                # rectangle width for cropping
 )
 fig, interpolated_ds2 = plot_LDOS_map_and_profile_v3(
     GS_LDOS_2T_003,
@@ -3566,8 +3566,8 @@ fig, interpolated_ds2 = plot_LDOS_map_and_profile_v3(
     LP_perc=(0, 65),
     scalebar_length_nm=20,
     scalebar_color='white',
-    line_width_px=1,           # 또는 1
-    width_nm=10                # crop용 rectangle 너비
+    line_width_px=1,           # or 1
+    width_nm=10                # rectangle width for cropping
 )
 
 fig
@@ -6253,11 +6253,11 @@ def multi_peak_IGS_fitting_region_parallel(
     background_fit_data = np.full((ny, nx, n_bias), np.nan, dtype=float)
     peak_fit_data = np.full((ny, nx, peak_dim, n_bias), np.nan, dtype=float)
 
-    # ✅ model type map 초기화
+    # ✅ Initialize model type map
     model_type_map = np.empty((ny, nx), dtype=object)
 
     # -------------------------------------------------------------------
-    # (3) CdGM 후보 에너지 스케일 계산
+    # (3) Compute CdGM candidate energy scale
     # -------------------------------------------------------------------
     E_CdGM = (SCgap ** 2) / Ef
     n_min = int(np.floor(bias_common.min() / E_CdGM))
@@ -6267,7 +6267,7 @@ def multi_peak_IGS_fitting_region_parallel(
     candidate_levels = levels + half_levels
 
     # -------------------------------------------------------------------
-    # (4) 개별 픽셀 fitting 함수
+    # (4) Per-pixel fitting function
     # -------------------------------------------------------------------
     def fit_pixel(y, x):
         try:
@@ -6293,7 +6293,7 @@ def multi_peak_IGS_fitting_region_parallel(
             return None
 
     # -------------------------------------------------------------------
-    # (5) 마스크 기반 좌표 선택
+    # (5) Mask-based coordinate selection
     # -------------------------------------------------------------------
     if ZB_masking:
         if "ZB_mask" not in ds_copy:
@@ -6304,21 +6304,21 @@ def multi_peak_IGS_fitting_region_parallel(
         pixel_indices = [(y, x) for y in range(ny) for x in range(nx)]
 
     # -------------------------------------------------------------------
-    # (6) 병렬 처리 실행
+    # (6) Run parallel processing
     # -------------------------------------------------------------------
     results = Parallel(n_jobs=n_jobs)(
         delayed(fit_pixel)(y, x) for (y, x) in tqdm(pixel_indices, desc="Multi-peak fitting", unit="pixel")
     )
 
     # -------------------------------------------------------------------
-    # (7) 결과 채우기
+    # (7) Fill in results
     # -------------------------------------------------------------------
     for idx, (y, x) in enumerate(pixel_indices):
         ds_fit = results[idx]
         if ds_fit is not None and isinstance(ds_fit, xr.Dataset):
             num_peaks = ds_fit.dims.get("peak", 0)
 
-            # ✅ 정확한 모델 이름 저장
+            # ✅ Save the exact model name
             best_model = ds_fit.attrs.get("best_model", None)
             model_type_map[y, x] = best_model if best_model else "unknown"
 
@@ -6361,7 +6361,7 @@ def multi_peak_IGS_fitting_region_parallel(
                 peak_fit_data[y, x, :min(pf.shape[0], peak_dim), :] = pf[:min(pf.shape[0], peak_dim), :]
 
     # -------------------------------------------------------------------
-    # (8) Dataset 구성
+    # (8) Construct Dataset
     # -------------------------------------------------------------------
     ds_out = xr.Dataset({var: (["Y", "X", "peak"], peak_data[var]) for var in peak_vars})
     ds_out["param_data"] = (["Y", "X", "param_name", "param_attr"], param_data)
@@ -6390,7 +6390,7 @@ def multi_peak_IGS_fitting_region_parallel(
         ds_out["ZB_mask"] = ds_copy["ZB_mask"]
 
     # -------------------------------------------------------------------
-    # (9) 메타데이터 기록
+    # (9) Record metadata
     # -------------------------------------------------------------------
     ds_out.attrs.update({
         "description": "Parallel multi-peak fitting results with model type map and full param structure.",
@@ -6959,7 +6959,7 @@ fig
 # +
 import matplotlib.pyplot as plt
 
-# 1) 좌표 리스트
+# 1) Coordinate list
 # for 2T 003
 '''select_coords = [
     (24, 50),
@@ -6980,21 +6980,21 @@ select_coords = [
     (31, 18),
     (45, 59)
 ]
-# 2) Y값 기준으로 위→아래 정렬 및 번호 매기기
+# 2) Sort top-to-bottom by Y value and assign numbers
 sorted_coords = sorted(select_coords, key=lambda yx: yx[0])
 numbers = list(range(1, len(sorted_coords) + 1))
 
-# 3) 그림 생성 및 지도 플롯
+# 3) Create figure and plot map
 fig, ax = plt.subplots(figsize=(6,6))
 grid_LDOS_SnD_pks.LDOS.sel(bias_mV=0).plot(ax=ax)
 
-# 4) 좌표별로 점 찍고 번호 텍스트는 점 위쪽에 배치
+# 4) Plot a point per coordinate and place the number label above the point
 for (y, x), num in zip(sorted_coords, numbers):
-    # 실제 축 좌표값
+    # Actual axis coordinate value
     x_val = grid_LDOS_SnD_pks['X'].isel(X=x).values
     y_val = grid_LDOS_SnD_pks['Y'].isel(Y=y).values
 
-    # 반투명 붉은 점
+    # Semi-transparent red point
     ax.scatter(
         x_val, y_val,
         color='red', alpha=0.5, s=50,
@@ -7002,20 +7002,20 @@ for (y, x), num in zip(sorted_coords, numbers):
     )
     ax.set_aspect('equal', adjustable='box')
     
-    # 번호 텍스트를 점의 위쪽으로 오프셋
+    # Offset the number label above the point
     ax.annotate(
         str(num),
         xy=(x_val, y_val),
-        xytext=(0, 5),            # y축으로 5포인트만큼 위쪽으로 이동
+        xytext=(0, 5),            # Shift 5 points upward along the y-axis
         textcoords='offset points',
-        ha='center', va='bottom', # 중앙 정렬, 텍스트의 하단이 기준점
+        ha='center', va='bottom', # Center-aligned, text bottom as the anchor
         color='white',
         fontsize=12,
         fontweight='bold',
         zorder=11
     )
 
-# 5) 최종 레이아웃
+# 5) Final layout
 ax.set_title('Bias=0 LDOS Map with Selected Points')
 plt.tight_layout()
 plt.show()
@@ -7024,7 +7024,7 @@ plt.show()
 # +
 import matplotlib.pyplot as plt
 
-# 1) 저장할 좌표 리스트
+# 1) List of coordinates to save
 # for 2T 003
 '''select_coords = [
     (24, 50),
@@ -7047,11 +7047,11 @@ select_coords = [
 ]
 
 
-# 2) 순회하면서 그림과 DataFrame 생성·저장
+# 2) Iterate to create and save the figure and DataFrame
 for idx, (y, x) in enumerate(select_coords, start=1):
     label = f"{idx}_Y{y}X{x}"
     
-    # a) 함수 호출: fig, df 반환
+    # a) Call the function: returns fig, df
     fig, df = plot_region_fitting_result_from_dsout(
         ds_out=grid_LDOS_SnD_pks_results,
         ds=grid_LDOS_SnD_pks,
@@ -7062,16 +7062,16 @@ for idx, (y, x) in enumerate(select_coords, start=1):
         return_fig=True
     )
     
-    # b) SVG로 그림 저장
+    # b) Save the figure as SVG
     fig.savefig(f"{label}.svg", format='svg', bbox_inches='tight')
     
-    # **c) 화면에 그림 출력**
+    # **c) Display the figure on screen**
     plt.show()
     
-    # d) CSV로 DataFrame 저장
+    # d) Save the DataFrame as CSV
     df.to_csv(f"df_{label}.csv", index=True)
     
-    # e) 메모리 해제
+    # e) Free memory
     plt.close(fig)
 
 
@@ -8491,19 +8491,19 @@ def cluster_with_pca_knn(
         The same ds object, now containing the new cluster variable.
     """
     # ——————————————————————————————————————————————————————————————
-    # 0) Interactive feature selection을 위해 전역 변수 정의
+    # 0) Define global variables for interactive feature selection
     global selected_features_global
     try:
-        # 이미 정의되어 있으면 그대로 사용
+        # Use as-is if already defined
         selected_features_global
     except NameError:
-        # 정의되지 않았으면 빈 리스트로 초기화
+        # Initialize as an empty list if not defined
         selected_features_global = []
 
     if not selected_features:
         def cont(feats):
             global ds
-            # 재귀 호출로 clustering 수행
+            # Perform clustering via recursive call
             ds = cluster_with_pca_knn(ds, feats, auto_select_best_k, k_range)
             print("🔄 Features selected; ds has been updated.")
         select_ML_features_interactive(ds, callback=cont)
@@ -8627,7 +8627,7 @@ def cluster_with_pca_knn(
         return ds
 
     # ——————————————————————————————————————————————————————————————
-    # 자동 모드 이후 계속 실행되는 부분
+    # Part that continues executing after auto mode
     print(f"Selected K = {k_best}")
 
     # 8) Final clustering and reshape
@@ -10410,7 +10410,7 @@ def cluster_umap_HDBSCAN(
         vmin=0,
         vmax=max_label,
         s=10,
-        alpha=0.3,                    # 투명도 설정: 점 밀도 강조
+        alpha=0.3,                    # Set opacity: emphasize point density
         rasterized=rasterize_pts
     )
 
@@ -10745,7 +10745,7 @@ def cluster_umap_HDBSCAN_Bayesian_opt(
 
 # -
 
-# 예제 1: 직접 모드 — 피처 리스트를 명시하고 Bayesian 최적화 수행
+# Example 1: Direct mode - specify the feature list and run Bayesian optimization
 ds_opt = cluster_umap_HDBSCAN_Bayesian_opt(
     ds,
     #selected_features=['peak_center', 'peak_amplitude', 'peak_sigma'],
@@ -10756,16 +10756,16 @@ ds_opt = cluster_umap_HDBSCAN_Bayesian_opt(
         'random_state': 0
     },
     variance_threshold=0.90,
-    noise_range=(0.05, 0.20),    # 허용할 노이즈 비율 5~20%
-    max_evals=30,                # 최대 30회 탐색
-    sample_fraction=0.10,         # 전체 포인트의 10%만 샘플링
+    noise_range=(0.05, 0.20),    # Allowed noise ratio 5-20%
+    max_evals=30,                # Up to 30 search iterations
+    sample_fraction=0.10,         # Sample only 10% of all points
     hdbscan_space = {
         'min_cluster_size': hp.quniform('min_cluster_size', 10, 1000, 100),
         'min_samples':      hp.quniform('min_samples', 1, 1000, 100),
         'cluster_selection_epsilon': hp.uniform('cluster_selection_epsilon', 0.0, 0.5)
     })
 print(ds_opt)
-# → ds_opt.data_vars 에 'cluster_umap_HDBSCAN_opt0' 변수가 추가됩니다.
+# -> the 'cluster_umap_HDBSCAN_opt0' variable is added to ds_opt.data_vars.
 
 ds_opt
 
@@ -10782,18 +10782,18 @@ ds_opt
 
 
 
-# 예제 2: 대화식 모드 — 처음에는 피처를 None 으로 두고 위젯으로 선택
+# Example 2: Interactive mode - leave features as None initially and select via widget
 cluster_umap_HDBSCAN_Bayesian_opt(
     ds,
-    selected_features=None,     # None일 경우 피처 선택 위젯이 표시됩니다
+    selected_features=None,     # If None, the feature-selection widget is displayed
     umap_kwargs={'n_neighbors':50,'min_dist':0.2,'random_state':0},
     variance_threshold=0.90,
-    noise_range=(0.05,0.20),# 허용할 노이즈 비율 5~20%
-    max_evals=20,# 최대 30회 탐색
-    sample_fraction=0.10 # 전체 포인트의 10%만 샘플링
+    noise_range=(0.05,0.20),# Allowed noise ratio 5-20%
+    max_evals=20,# Up to 30 search iterations
+    sample_fraction=0.10 # Sample only 10% of all points
 )
-# — 위젯에서 피처를 선택 & Confirm 하신 후,
-#   최적 파라미터로 클러스터링된 결과가 전역 변수 ds_opt 에 저장됩니다.
+# - After selecting features in the widget & clicking Confirm,
+#   the clustering result with the optimal parameters is stored in the global variable ds_opt.
 
 
 
@@ -10818,13 +10818,13 @@ def cluster_umap_knn(
 ) -> xr.Dataset:
     """
     Perform UMAP + KMeans clustering and append the results to the Dataset.
-    (…docstring 생략…)
+    (...docstring omitted...)
     """
-    # 경고 무시
+    # Suppress warnings
     warnings.filterwarnings("ignore", category=FutureWarning)
     warnings.filterwarnings("ignore", category=UserWarning)
 
-    # 입력 유효성 검사
+    # Validate input
     if ds is None:
         raise ValueError("Input dataset 'ds' is None.")
     if not isinstance(ds, xr.Dataset):
@@ -10832,11 +10832,11 @@ def cluster_umap_knn(
     if not selected_features:
         raise ValueError("No features selected for clustering.")
 
-    # UMAP 파라미터 기본값
+    # Default UMAP parameters
     if umap_kwargs is None:
         umap_kwargs = {'n_neighbors': 30, 'min_dist': 0.3, 'random_state': 42}
 
-    # 좌표 추출
+    # Extract coordinates
     try:
         x_vals = ds['X'].values
         y_vals = ds['Y'].values
@@ -10845,11 +10845,11 @@ def cluster_umap_knn(
     Xgrid, Ygrid = np.meshgrid(x_vals, y_vals)
     nY, nX = Xgrid.shape
 
-    # 피크 차원 크기 결정
+    # Determine peak dimension size
     peak_vars = [v for v in ds.data_vars if 'peak' in ds[v].dims]
     nPeak = ds[peak_vars[0]].shape[-1] if peak_vars else 1
 
-    # 특징 행렬 구성
+    # Construct feature matrix
     feature_list = []
     for feat in selected_features:
         if feat == 'X_coordinate':
@@ -10868,7 +10868,7 @@ def cluster_umap_knn(
             feature_list.append(data.reshape(-1))
     all_feats = np.stack(feature_list, axis=1)
 
-    # 마스크 적용
+    # Apply mask
     if 'ZB_mask' in ds:
         mask = ds['ZB_mask'].values.astype(bool)
         mask_flat = np.repeat(mask[..., None], nPeak, axis=2).reshape(-1)
@@ -10877,7 +10877,7 @@ def cluster_umap_knn(
     valid = (~np.isnan(all_feats).any(axis=1)) & mask_flat
     features = all_feats[valid]
 
-    # 표준화
+    # Standardize
     X_scaled = StandardScaler().fit_transform(features)
 
     # PCA
@@ -10885,10 +10885,10 @@ def cluster_umap_knn(
     X_pca = pca.fit_transform(X_scaled)
     print(f"PCA reduced to {X_pca.shape[1]} components to explain ≥ {variance_threshold*100:.1f}% variance")
 
-    # UMAP 임베딩
+    # UMAP embedding
     X_umap = umap.UMAP(**umap_kwargs).fit_transform(X_pca)
 
-    # KMeans 탐색
+    # KMeans search
     Ks = list(range(k_range[0], k_range[1] + 1))
     inertias, silhouettes, label_store = [], [], []
     for k in Ks:
@@ -10902,7 +10902,7 @@ def cluster_umap_knn(
         silhouettes.append(sil)
         label_store.append(lbl)
 
-    # Elbow & Silhouette 플롯
+    # Elbow & Silhouette plot
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
     axes[0].plot(Ks, inertias, 'o-')
     axes[0].set_title("Elbow Method (Inertia)")
@@ -10912,7 +10912,7 @@ def cluster_umap_knn(
     axes[1].set_xlabel("K"); axes[1].set_ylabel("Score"); axes[1].grid(True)
     plt.tight_layout(); plt.show()
 
-    # 로컬 맥스 찾기
+    # Find local maxima
     def find_local_maxima(arr):
         return [i for i in range(1, len(arr)-1) if arr[i] > arr[i-1] and arr[i] > arr[i+1]]
     local_max = find_local_maxima(silhouettes)
@@ -10920,7 +10920,7 @@ def cluster_umap_knn(
     top_ks = [Ks[i] for i in top_idxs]
     print("Top 3 silhouette-local-max Ks:", top_ks)
 
-    # k 선택
+    # Select k
     if auto_select_best_k:
         best_k = top_ks[0]
         print(f"Auto-selected best k = {best_k}")
@@ -10938,22 +10938,22 @@ def cluster_umap_knn(
             if best_k not in Ks:
                 raise ValueError(f"Chosen k={best_k} not in tested range {Ks}.")
 
-    # 최종 레이블 및 시각화
+    # Final labels and visualization
     best_labels = label_store[Ks.index(best_k)]
 
-    # --- 수정된 부분: axs가 단일 Axes일 때를 처리 ---
+    # --- Modified section: handle the case where axs is a single Axes ---
     fig, axs = plt.subplots(1, len(top_ks), figsize=(5*len(top_ks), 5))
     if len(top_ks) == 1:
-        axs = [axs]  # 단일 Axes 객체를 리스트로 감싸서 일관된 인덱싱 지원
+        axs = [axs]  # Wrap the single Axes object in a list to support consistent indexing
     for ax, k in zip(axs, top_ks):
         lbls = label_store[Ks.index(k)]
         ax.scatter(X_umap[:,0], X_umap[:,1], c=lbls, cmap="tab20", s=20)
         ax.set_title(f"K={k}, Silhouette={silhouettes[Ks.index(k)]:.3f}")
         ax.set_xlabel("UMAP-1"); ax.set_ylabel("UMAP-2"); ax.grid(True)
     plt.tight_layout(); plt.show()
-    # --- 수정된 부분 끝 ---
+    # --- End of modified section ---
 
-    # 결과 저장
+    # Save results
     full_lbl = np.full(all_feats.shape[0], -1, dtype=int)
     full_lbl[valid] = best_labels
     clusters3d = full_lbl.reshape((nY, nX, nPeak))
@@ -10967,7 +10967,7 @@ def cluster_umap_knn(
         var_name = f"{base}{idx}"
     ds_out[var_name] = (('Y','X','peak'), clusters3d)
 
-    # 메타데이터 기록
+    # Record metadata
     ds_out.attrs.update({
         'feature_vars_used': selected_features,
         'k_range': k_range,
@@ -10992,7 +10992,7 @@ ds_clustered = cluster_umap_knn(
     ds=ds,
     selected_features=selected_features_global,
     k_range=(2, 14),
-    auto_select_best_k=False,   # False일 때 콘솔에서 k 직접 입력
+    auto_select_best_k=False,   # When False, enter k directly in the console
     umap_kwargs={"n_neighbors": 30, "min_dist": 0.3, "random_state": 42},
     variance_threshold=0.95
 )
@@ -11005,7 +11005,7 @@ cluster_select_var_interactive(ds_filtered)
 
 cluster_select_labels_interactive(
     ds_filtered,
-    callback=plot_cluster_statistics_grid,  # 그냥 함수명만 전달
+    callback=plot_cluster_statistics_grid,  # Just pass the function name
     **dict(
         remove_background=True,
         remove_neg_amp=True,
@@ -11297,7 +11297,7 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# Step 1: 데이터 전처리 (ds는 이미 로드되었다고 가정)
+# Step 1: Data preprocessing (assumes ds is already loaded)
 x_vals = ds["X"].values
 y_vals = ds["Y"].values
 peak_center = ds["peak_center"].values
@@ -11309,16 +11309,16 @@ zb_mask = ds["ZB_mask"].values
 # Step 2: Background subtraction
 amp = amp - np.repeat(background[..., np.newaxis], amp.shape[2], axis=2)
 
-# Step 3: 유효한 피크 마스크
+# Step 3: Valid peak mask
 valid_mask = (~np.isnan(peak_center)) & (~np.isnan(amp)) & (~np.isnan(sigma)) & (~np.isnan(zb_mask[..., np.newaxis]))
 valid_indices = np.argwhere(valid_mask)
 
-# Step 4: 샘플링 (예: 90%)
+# Step 4: Sampling (e.g., 90%)
 np.random.seed(42)
 n_sample = max(1, int(len(valid_indices) * 0.9))
 sample_indices = valid_indices[np.random.choice(len(valid_indices), size=n_sample, replace=False)]
 
-# Step 5: Feature 생성 (X, Y 제외) + 메타데이터 저장
+# Step 5: Generate features (excluding X, Y) + save metadata
 features = []
 metadata = []
 
@@ -11333,11 +11333,11 @@ for y, x, p in sample_indices:
 X_raw = np.stack(features)
 
 # Step 6: Feature weighting
-# 가중치: peak_center 5배 강조
+# Weight: emphasize peak_center by 5x
 feature_weights = np.array([5.0, 1.0, 1.0])
 X_weighted = X_raw * feature_weights
 
-# Step 7: 정규화 → PCA
+# Step 7: Normalize -> PCA
 X_scaled = StandardScaler().fit_transform(X_weighted)
 pca = PCA(n_components=0.95, random_state=42)
 X_pca = pca.fit_transform(X_scaled)
@@ -11437,7 +11437,7 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# Step 1: 데이터 로딩 및 전처리 (ds 가 이미 로드된 상태라고 가정)
+# Step 1: Data loading and preprocessing (assumes ds is already loaded)
 x_vals = ds["X"].values
 y_vals = ds["Y"].values
 peak_center = ds["peak_center"].values
@@ -11446,19 +11446,19 @@ sigma = ds["peak_sigma"].values
 background = ds["background_value"].values
 zb_mask = ds["ZB_mask"].values
 
-# Step 2: 배경 제거
+# Step 2: Background removal
 amp = amp - np.repeat(background[..., np.newaxis], amp.shape[2], axis=2)
 
-# Step 3: 유효한 피크 선택
+# Step 3: Select valid peaks
 valid_mask = (~np.isnan(peak_center)) & (~np.isnan(amp)) & (~np.isnan(sigma)) & (~np.isnan(zb_mask[..., np.newaxis]))
 valid_indices = np.argwhere(valid_mask)
 
-# Step 4: 샘플링 (예: 1%)
+# Step 4: Sampling (e.g., 1%)
 np.random.seed(42)
 n_sample = max(1, int(len(valid_indices) * 0.91))
 sample_indices = valid_indices[np.random.choice(len(valid_indices), size=n_sample, replace=False)]
 
-# Step 5: feature 벡터 생성 + proximity 추가
+# Step 5: Generate feature vector + add proximity
 features = []
 metadata = []
 
@@ -11472,10 +11472,10 @@ for y, x, p in sample_indices:
 
 X_raw = np.stack(features)
 
-# Step 6: 정규화
+# Step 6: Normalize
 X_scaled = StandardScaler().fit_transform(X_raw)
 
-# Step 7: PCA (설명력 95% 유지)
+# Step 7: PCA (retain 95% explained variance)
 pca = PCA(n_components=0.95, random_state=42)
 X_pca = pca.fit_transform(X_scaled)
 print(f"PCA reduced to {X_pca.shape[1]} components")
@@ -11483,7 +11483,7 @@ print(f"PCA reduced to {X_pca.shape[1]} components")
 # Step 8: UMAP
 X_umap = umap.UMAP(n_neighbors=30, min_dist=0.3, random_state=42).fit_transform(X_pca)
 
-# Step 9: 다양한 K에 대해 KMeans 실행
+# Step 9: Run KMeans for various K
 K_range = range(2, 20)
 inertias, silhouettes, all_labels = [], [], []
 
@@ -11498,7 +11498,7 @@ for k in K_range:
         sil = -1
     silhouettes.append(sil)
 
-# Step 10: 로컬 최대값 기준 top 3 선택
+# Step 10: Select top 3 based on local maxima
 def find_local_maxima(arr):
     return [i for i in range(1, len(arr)-1) if arr[i] > arr[i-1] and arr[i] > arr[i+1]]
 
@@ -11508,7 +11508,7 @@ top_ks = [K_range[i] for i in top_indices]
 
 print("Top 3 silhouette-local-max Ks:", top_ks)
 
-# Step 11: 시각화
+# Step 11: Visualization
 fig, axs = plt.subplots(1, len(top_ks), figsize=(5 * len(top_ks), 5))
 for i, k in enumerate(top_ks):
     labels = all_labels[K_range.index(k)]
@@ -11520,7 +11520,7 @@ for i, k in enumerate(top_ks):
 plt.tight_layout()
 plt.show()
 
-# Step 12: best K 결과 저장
+# Step 12: best K Save results
 best_k = top_ks[0]
 best_labels = all_labels[K_range.index(best_k)]
 
@@ -11531,7 +11531,7 @@ for i, (y, x, p) in enumerate(metadata):
 
 ds["clusters_umap_kmeans_zero_proximity"] = (("Y", "X", "peak"), cluster_array)
 
-# Step 13: 결과 요약
+# Step 13: Summarize results
 print("Best K =", best_k)
 print("Unique Clusters:", np.unique(best_labels))
 print("Feature used: [center, amplitude, sigma, 1 / (1 + |center|)]")
@@ -11552,7 +11552,7 @@ from sklearn.metrics import silhouette_score
 import umap
 import warnings
 
-# 경고 무시 설정
+# Configure warning suppression
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -11637,11 +11637,11 @@ for w in proximity_weights:
         "silhouette_score": best_sil
     })
 
-# Step 13: 결과 요약 출력
+# Step 13: Print result summary
 results_df = pd.DataFrame(results)
 results_df = results_df.sort_values("proximity_weight").reset_index(drop=True)
 
-# Step 14: 시각화
+# Step 14: Visualization
 plt.figure(figsize=(8, 5))
 plt.plot(results_df["proximity_weight"], results_df["silhouette_score"], 'o-', label='Silhouette Score')
 plt.xlabel("Proximity Feature Weight")
@@ -11652,7 +11652,7 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
-# Step 15: 표 출력
+# Step 15: Print table
 print("Weight vs Clustering Quality Summary:")
 print(results_df)
 
@@ -11668,11 +11668,11 @@ from sklearn.metrics import silhouette_score
 import umap
 import warnings
 
-# 경고 무시
+# Suppress warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# Step 1: 데이터 로딩 및 전처리 (ds 는 이미 로드된 상태라고 가정)
+# Step 1: Data loading and preprocessing (assumes ds is already loaded)
 x_vals = ds["X"].values
 y_vals = ds["Y"].values
 peak_center = ds["peak_center"].values
@@ -11681,19 +11681,19 @@ sigma = ds["peak_sigma"].values
 background = ds["background_value"].values
 zb_mask = ds["ZB_mask"].values
 
-# Step 2: 배경 제거
+# Step 2: Background removal
 amp = amp - np.repeat(background[..., np.newaxis], amp.shape[2], axis=2)
 
-# Step 3: 유효한 피크 선택
+# Step 3: Select valid peaks
 valid_mask = (~np.isnan(peak_center)) & (~np.isnan(amp)) & (~np.isnan(sigma)) & (~np.isnan(zb_mask[..., np.newaxis]))
 valid_indices = np.argwhere(valid_mask)
 
-# Step 4: 샘플링 (예: 1%)
+# Step 4: Sampling (e.g., 1%)
 np.random.seed(42)
 n_sample = max(1, int(len(valid_indices) * 0.91))
 sample_indices = valid_indices[np.random.choice(len(valid_indices), size=n_sample, replace=False)]
 
-# Step 5: feature 벡터 생성 + proximity 추가
+# Step 5: Generate feature vector + add proximity
 features = []
 metadata = []
 
@@ -11707,10 +11707,10 @@ for y, x, p in sample_indices:
 
 X_raw = np.stack(features)
 
-# Step 6: 정규화
+# Step 6: Normalize
 X_scaled = StandardScaler().fit_transform(X_raw)
 
-# Step 7: PCA (설명력 95% 유지)
+# Step 7: PCA (retain 95% explained variance)
 pca = PCA(n_components=0.95, random_state=42)
 X_pca = pca.fit_transform(X_scaled)
 print(f"PCA reduced to {X_pca.shape[1]} components")
@@ -11718,7 +11718,7 @@ print(f"PCA reduced to {X_pca.shape[1]} components")
 # Step 8: UMAP
 X_umap = umap.UMAP(n_neighbors=30, min_dist=0.3, random_state=42).fit_transform(X_pca)
 
-# Step 9: 다양한 K에 대해 KMeans 실행
+# Step 9: Run KMeans for various K
 K_range = range(2, 20)
 inertias, silhouettes, all_labels = [], [], []
 
@@ -11733,7 +11733,7 @@ for k in K_range:
         sil = -1
     silhouettes.append(sil)
 
-# Step 10-1: Elbow plot & Silhouette score 시각화
+# Step 10-1: Elbow plot & Silhouette score visualization
 fig, axs = plt.subplots(1, 2, figsize=(12, 4))
 axs[0].plot(K_range, inertias, 'o-')
 axs[0].set_title("Elbow Method (Inertia)")
@@ -11751,7 +11751,7 @@ plt.suptitle("KMeans Clustering Evaluation", fontsize=14)
 plt.tight_layout()
 plt.show()
 
-# Step 10: 로컬 최대값 기준 top 3 선택
+# Step 10: Select top 3 based on local maxima
 def find_local_maxima(arr):
     return [i for i in range(1, len(arr)-1) if arr[i] > arr[i-1] and arr[i] > arr[i+1]]
 
@@ -11761,7 +11761,7 @@ top_ks = [K_range[i] for i in top_indices]
 
 print("Top 3 silhouette-local-max Ks:", top_ks)
 
-# Step 11: UMAP 결과 시각화
+# Step 11: Visualize UMAP result
 fig, axs = plt.subplots(1, len(top_ks), figsize=(5 * len(top_ks), 5))
 for i, k in enumerate(top_ks):
     labels = all_labels[K_range.index(k)]
@@ -11773,7 +11773,7 @@ for i, k in enumerate(top_ks):
 plt.tight_layout()
 plt.show()
 
-# Step 12: best K 결과 저장
+# Step 12: best K Save results
 best_k = top_ks[0]
 best_labels = all_labels[K_range.index(best_k)]5
 
@@ -11787,7 +11787,7 @@ for i, (y, x, p) in enumerate(metadata):
 
 ds["clusters_umap_kmeans_zero_proximity"] = (("Y", "X", "peak"), cluster_array)
 
-# Step 13: 결과 요약
+# Step 13: Summarize results
 print("Best K =", best_k)
 print("Unique Clusters:", np.unique(best_labels))
 print("Feature used: [center, amplitude, sigma, 1 / (1 + |center|)]")
@@ -13263,32 +13263,32 @@ def plot_top_percent_3d(
     ds: xarray.Dataset
         DataSet containing the variable to plot.
     var_name: str
-        이름이 var_name인 DataArray를 ds에서 가져옵니다.
+        Fetch the DataArray named var_name from ds.
     top_percent: float
-        상위 몇 %의 데이터를 그릴지 설정합니다 (0 < top_percent <= 100).
+        Sets what top percentage of the data to plot (0 < top_percent <= 100).
     cmap: str
-        Plotly colorscale 이름을 지정합니다 (예: 'Viridis', 'Cividis', 'Plasma' 등).
+        Specifies the Plotly colorscale name (e.g. 'Viridis', 'Cividis', 'Plasma', etc.).
     opacity: float
-        마커의 투명도를 0.0 (완전 투명) ~ 1.0 (불투명) 사이로 설정합니다.
+        Sets the marker opacity between 0.0 (fully transparent) and 1.0 (opaque).
     max_size: float
-        마커의 최대 크기를 설정합니다.
+        Sets the maximum marker size.
     camera_eye: tuple of 3 floats
-        카메라의 초기 'eye' 위치를 지정 (x, y, z).
+        Specifies the camera's initial 'eye' position (x, y, z).
     
-    전체 데이터 값 범위를 기준으로 각 지점의 값 백분율을 계산하여
-    마커 크기를 조정하고, 지정된 카메라 위치로 초기 뷰를 설정합니다.
-    배경은 흰색입니다.
+    Computes each point's value percentile based on the overall data range,
+    adjusts the marker size, and sets the initial view to the specified camera position.
+    The background is white.
     """
-    # 1. DataArray 선택
+    # 1. Select DataArray
     data = ds[var_name]
     
-    # 2. 문턱값 계산 (100 - top_percent 백분위수)
+    # 2. Compute threshold (100 - top_percent percentile)
     threshold = np.nanpercentile(data.values, 100.0 - top_percent)
     
-    # 3. 상위 top_percent%에 해당하는 값의 마스크 생성
+    # 3. Create a mask for values in the top top_percent%
     mask = data.values >= threshold
     
-    # 4. 마스크에 따라 좌표 및 값 추출
+    # 4. Extract coordinates and values according to the mask
     indices = np.where(mask)
     coords = {
         dim: data.coords[dim].values[idx]
@@ -13299,18 +13299,18 @@ def plot_top_percent_3d(
     z_coords = coords['bias_mV']
     values = data.values[mask]
     
-    # 5. 전체 데이터 범위에서 값 백분율 계산 -> 마커 크기 (0 ~ max_size)
+    # 5. Compute value percentile over the full data range -> marker size (0 ~ max_size)
     global_min = np.nanmin(data.values)
     global_max = np.nanmax(data.values)
     rel = (values - global_min) / (global_max - global_min + 1e-12)
     sizes = rel * max_size
     
-    # 6. 데이터 중앙값 계산 (카메라 중심)
+    # 6. Compute data median (camera center)
     x_center = float(np.nanmedian(x_coords))
     y_center = float(np.nanmedian(y_coords))
     z_center = float(np.nanmedian(z_coords))
     
-    # 7. Plotly 3D 산점도 생성
+    # 7. Create Plotly 3D scatter plot
     scatter = go.Scatter3d(
         x=x_coords,
         y=y_coords,
@@ -13325,15 +13325,15 @@ def plot_top_percent_3d(
         )
     )
     
-    # 8. 레이아웃 및 카메라 설정
+    # 8. Configure layout and camera
     camera = dict(
         center=dict(x=x_center, y=y_center, z=z_center),
         eye=dict(x=camera_eye[0], y=camera_eye[1], z=camera_eye[2])
     )
     
     layout = go.Layout(
-            width=600,     # ← 여기
-    height=600,     # ← 그리고 여기
+            width=600,     # <- here
+    height=600,     # <- and here
         title=f"'{var_name}' 3D Scatter",
         paper_bgcolor='white',
         plot_bgcolor='white',
@@ -13363,7 +13363,7 @@ def plot_top_percent_3d(
     fig = go.Figure(data=[scatter], layout=layout)
     fig.show()
 
-# 사용 예시:
+# Usage example:
 # plot_top_percent_3d(
 #     ds_opt2,
 #     'cluster_umap_HDBSCAN1_L1',
@@ -13403,22 +13403,22 @@ def plot_multi_top_percent_3d_logscale(
     ds: xarray.Dataset
         DataSet containing the variables to plot.
     var_names: list of str
-        DataArray 이름 목록 (예: ['cluster_umap_HDBSCAN1_L0', ..., 'cluster_umap_HDBSCAN1_L5']).
+        List of DataArray names (e.g. ['cluster_umap_HDBSCAN1_L0', ..., 'cluster_umap_HDBSCAN1_L5']).
     top_percent: float
-        상위 몇 %의 데이터를 표시할지 설정합니다 (0 < top_percent <= 100).
+        Sets what top percentage of the data to display (0 < top_percent <= 100).
     opacity: float
-        마커의 투명도 (0.0 ~ 1.0).
+        Marker opacity (0.0 ~ 1.0).
     max_size: float
-        마커의 최대 크기.
+        Maximum marker size.
     camera_eye: tuple of 3 floats
-        카메라의 초기 'eye' 위치를 지정 (x, y, z).
+        Specifies the camera's initial 'eye' position (x, y, z).
 
-    각 변수에 대해 상위 top_percent% 포인트만 추출하여,
-    흰색에서 tab10 컬러로 이어지는 2색 스케일을 적용하고,
-    로그 스케일로 마커 크기를 매핑하여 작은 값은 거의 보이지 않고 큰 값은 강조합니다.
-    배경 흰색, 테두리 없는 마커 설정.
+    For each variable, extract only the top top_percent% of points,
+    apply a two-color scale running from white to a tab10 color,
+    and map marker size on a log scale so small values are nearly invisible and large values stand out.
+    White background, markers with no border.
     """
-    # Tab10 첫 6가지 색상
+    # First 6 colors of Tab10
     tab10_colors = [
         '#1f77b4', '#ff7f0e', '#2ca02c',
         '#d62728', '#9467bd', '#8c564b'
@@ -13444,13 +13444,13 @@ def plot_multi_top_percent_3d_logscale(
         
         all_x.append(x); all_y.append(y); all_z.append(z)
         
-        # 로그 스케일 크기 매핑
+        # Log-scale size mapping
         global_min = np.nanmin(data.values)
         global_max = np.nanmax(data.values)
         rel = (vals - global_min) / (global_max - global_min + 1e-12)
         sizes = max_size * np.log10(rel * 9 + 1)
         
-        # 흰색 → 지정 색상
+        # White -> specified color
         color = tab10_colors[idx % len(tab10_colors)]
         colorscale = [[0, 'white'], [1, color]]
         
@@ -13462,13 +13462,13 @@ def plot_multi_top_percent_3d_logscale(
                 color=vals,
                 colorscale=colorscale,
                 opacity=opacity,
-                line=dict(width=0)  # 테두리 제거
+                line=dict(width=0)  # Remove border
             ),
             name=var
         )
         traces.append(trace)
     
-    # 중앙값 기반 카메라 중심
+    # Median-based camera center
     all_x_arr = np.concatenate(all_x)
     all_y_arr = np.concatenate(all_y)
     all_z_arr = np.concatenate(all_z)
@@ -13484,7 +13484,7 @@ def plot_multi_top_percent_3d_logscale(
     )
     
     layout = go.Layout(
-        title=f"상위 {top_percent}% 3D Scatter (Log‑scale size): {', '.join(var_names)}",
+        title=f"Top {top_percent}% 3D Scatter (Log-scale size): {', '.join(var_names)}",
         paper_bgcolor='white',
         plot_bgcolor='white',
         scene=dict(
@@ -13511,7 +13511,7 @@ def plot_multi_top_percent_3d_logscale(
 
 # -
 
-# 사용 예시:
+# Usage example:
 plot_multi_top_percent_3d_logscale(
     ds_opt2,
     ['cluster_umap_HDBSCAN1_L0', 'cluster_umap_HDBSCAN1_L1',
@@ -14451,7 +14451,7 @@ ds_opt2.LDOS.sel(bias_mV=0).plot()
 import numpy as np
 import matplotlib.pyplot as plt
 
-# 1) 대상 DataArray 추출
+# 1) Extract the target DataArray
 #da = ds_opt2.LDOS.sel(bias_mV=0)#
 #da = ds_opt2.cluster_umap_HDBSCAN1_L0.sel(bias_mV=0)
 da = ds_opt2.cluster_umap_HDBSCAN1_L1.sel(bias_mV=0)
@@ -14461,14 +14461,14 @@ da = ds_opt2.cluster_umap_HDBSCAN1_L1.sel(bias_mV=0)
 
 
 
-# 2) 로버스트 컬러 범위 계산 (2, 98 퍼센타일)
+# 2) Compute robust color range (2, 98 percentile)
 p0, p98 = np.nanpercentile(ds_opt2.LDOS.sel(bias_mV=0).values, [0, 100])
 
-# 3) 플롯
+# 3) Plot
 fig, ax = plt.subplots(figsize=(6,5))
 da.plot(
     ax=ax,
-    cmap='viridis',  # 원하시는 colormap
+    cmap='viridis',  # colormap of your choice
     vmin=p0,
     vmax=p98
 )
@@ -14537,25 +14537,25 @@ import xarray as xr
 import matplotlib.pyplot as plt
 from scipy.spatial import cKDTree
 
-# — 1) df_0T_peaks_points 예시 DataFrame —
-# — 2) ZB_mask의 notnull 위치 인덱스와 좌표 추출 —
+# — 1) df_0T_peaks_points example DataFrame —
+# — 2) Extract not-null position indices and coordinates of ZB_mask —
 mask = ds_opt2.ZB_mask.notnull()         # (Y, X) boolean
-y_idx, x_idx = np.where(mask.values)     # True인 인덱스
-X_coords = ds_opt2.X.values[x_idx]       # 해당 열마다 X 좌표
-Y_coords = ds_opt2.Y.values[y_idx]       # 해당 행마다 Y 좌표
+y_idx, x_idx = np.where(mask.values)     # indices where True
+X_coords = ds_opt2.X.values[x_idx]       # X coordinate for each corresponding column
+Y_coords = ds_opt2.Y.values[y_idx]       # Y coordinate for each corresponding row
 
-# — 3) KD-Tree 구성 (peak points) —
+# — 3) Build KD-Tree (peak points) —
 tree = cKDTree(df_0T_peaks_points[['X','Y']].values)
 
-# — 4) 각 ZB_mask 점에서 가장 가까운 peak까지 거리 계산 —
+# — 4) Compute distance from each ZB_mask point to the nearest peak —
 points = np.column_stack([X_coords, Y_coords])
 distances, _ = tree.query(points, k=1)
 
-# — 5) 거리 값을 원래 그리드 형태로 되돌리기 —
+# — 5) Reshape the distance values back into the original grid form —
 dist_map = np.full(mask.shape, np.nan, dtype=float)
 dist_map[y_idx, x_idx] = distances
 
-# — 6) xarray.DataArray로 변환 —
+# — 6) Convert to xarray.DataArray —
 dist_da = xr.DataArray(
     dist_map,
     coords={'Y': ds_opt2.Y, 'X': ds_opt2.X},
@@ -14563,7 +14563,7 @@ dist_da = xr.DataArray(
     name='dist_to_peaks'
 )
 
-# — 7) 거리 지도 플롯 —
+# — 7) Plot the distance map —
 plt.figure(figsize=(6,5))
 im = dist_da.plot(
     cmap='viridis',
@@ -14575,7 +14575,7 @@ plt.xlabel('X (m)')
 plt.ylabel('Y (m)')
 plt.tight_layout()
 
-# ◀ 여기서 SVG로 저장
+# ◀ Save as SVG here
 plt.savefig('distance_to_0T_preexisting_peaks.svg', format='svg', dpi=300, bbox_inches='tight')
 
 plt.show()
@@ -14634,25 +14634,25 @@ import xarray as xr
 import matplotlib.pyplot as plt
 from scipy.spatial import cKDTree
 
-# — 1) df_0T_peaks_points 예시 DataFrame —
-# — 2) ZB_mask의 notnull 위치 인덱스와 좌표 추출 —
+# — 1) df_0T_peaks_points example DataFrame —
+# — 2) Extract not-null position indices and coordinates of ZB_mask —
 mask = ds_opt2.ZB_mask.notnull()         # (Y, X) boolean
-y_idx, x_idx = np.where(mask.values)     # True인 인덱스
-X_coords = ds_opt2.X.values[x_idx]       # 해당 열마다 X 좌표
-Y_coords = ds_opt2.Y.values[y_idx]       # 해당 행마다 Y 좌표
+y_idx, x_idx = np.where(mask.values)     # indices where True
+X_coords = ds_opt2.X.values[x_idx]       # X coordinate for each corresponding column
+Y_coords = ds_opt2.Y.values[y_idx]       # Y coordinate for each corresponding row
 
-# — 3) KD-Tree 구성 (peak points) —
+# — 3) Build KD-Tree (peak points) —
 tree = cKDTree(df_0T_peaks_points_all[['X','Y']].values)
 
-# — 4) 각 ZB_mask 점에서 가장 가까운 peak까지 거리 계산 —
+# — 4) Compute distance from each ZB_mask point to the nearest peak —
 points = np.column_stack([X_coords, Y_coords])
 distances, _ = tree.query(points, k=1)
 
-# — 5) 거리 값을 원래 그리드 형태로 되돌리기 —
+# — 5) Reshape the distance values back into the original grid form —
 dist_map = np.full(mask.shape, np.nan, dtype=float)
 dist_map[y_idx, x_idx] = distances
 
-# — 6) xarray.DataArray로 변환 —
+# — 6) Convert to xarray.DataArray —
 dist_da = xr.DataArray(
     dist_map,
     coords={'Y': ds_opt2.Y, 'X': ds_opt2.X},
@@ -14660,7 +14660,7 @@ dist_da = xr.DataArray(
     name='dist_to_peaks'
 )
 
-# — 7) 거리 지도 플롯 —
+# — 7) Plot the distance map —
 plt.figure(figsize=(6,5))
 im = dist_da.plot(
     cmap='viridis',
@@ -14672,7 +14672,7 @@ plt.xlabel('X (m)')
 plt.ylabel('Y (m)')
 plt.tight_layout()
 
-# ◀ 여기서 SVG로 저장
+# ◀ Save as SVG here
 plt.savefig('distance_to_0T_preexisting_peaks.svg', format='svg', dpi=300, bbox_inches='tight')
 
 plt.show()
@@ -14735,7 +14735,7 @@ sns.lineplot(
 plt.xlabel('Bias (mV)')
 plt.ylabel('LDOS')
 plt.title('')
-# legend를 우하단으로 이동
+# Move the legend to the lower right
 plt.legend(loc='upper right', title='')
 
 plt.tight_layout()
@@ -14781,7 +14781,7 @@ for ax, (label, da) in zip(axes, maps):
     ax.set_title(f"{label} @ 0 mV")
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
-    ax.set_aspect('equal')  # 유지: x축과 y축 동일 비율
+    ax.set_aspect('equal')  # Keep: equal aspect ratio for x- and y-axes
 
 # add a single colorbar alongside both plots
 cbar = fig.colorbar(pcm, ax=axes.tolist(), orientation='vertical', fraction=0.046, pad=0.04)
@@ -14931,20 +14931,20 @@ plt.show()
 import numpy as np
 from scipy.stats import pearsonr
 
-# 1) 두 DataArray 준비
-#    fraction: cluster 기여도 분율 (세 번째 패널)
-#    dist_da : ZB_mask 위치에서 피크까지의 거리 (네 번째 패널)
+# 1) Prepare the two DataArrays
+#    fraction: cluster contribution ratio (third panel)
+#    dist_da: distance from ZB_mask positions to the peak (fourth panel)
 fraction_da = fraction              # xarray.DataArray, dims=('Y','X')
 distance_da = dist_da               # xarray.DataArray, dims=('Y','X')
 
-# 2) NaN이 아닌 공통 마스크 생성
+# 2) Create a common non-NaN mask
 mask = np.isfinite(fraction_da.values) & np.isfinite(distance_da.values)
 
-# 3) 1차원 배열로 변환
+# 3) Convert to a 1D array
 x = fraction_da.values[mask]
 y = distance_da.values[mask]
 
-# 4) Pearson 상관계수 및 p-value 계산
+# 4) Compute Pearson correlation coefficient and p-value
 r, p = pearsonr(x, y)
 print(f"Pearson correlation coefficient: r = {r:.4f}, p-value = {p:.3e}")
 corr_da = xr.corr(fraction_da, distance_da, dim=('Y','X'))
@@ -15396,7 +15396,7 @@ ds_cluster
 #ds_opt2.LDOS.sel(bias_mV=0).plot(robust = True)
 #isns.imshow(ds_opt2.LDOS.sel(bias_mV=0).values)
 
-# 1) 전체 폰트 패밀리와 사이즈 설정 (Arial, 14pt)
+# 1) Set overall font family and size (Arial, 14pt)
 isns.set_context(
     mode="notebook",
     fontfamily="Arial",
@@ -15553,19 +15553,19 @@ ds_3
 filter_gaussian_xr(ds_3, overwrite=True, )
 
 # +
-# ── 최상단에서 한 번만 실행 ───────────────────────────────────────────────
+# ── Run once at the very top ───────────────────────────────────────────────
 import panel as pn
 import holoviews as hv
-import hvplot.xarray  # hvplot.xarray API 활성화
+import hvplot.xarray  # activate the hvplot.xarray API
 
 pn.extension()            # Panel extension: DO NOT pass 'bokeh' here
 hv.extension('bokeh')     # HoloViews  Bokeh extension
 
-# ── 이하 최소 재현 테스트 코드 ─────────────────────────────────────────
+# ── Minimal reproducible test code below ─────────────────────────────────────────
 import numpy as np
 import xarray as xr
 
-# 더미 3D 데이터셋 생성
+# Create a dummy 3D dataset
 bias = np.linspace(0, 100, 5)
 X    = np.linspace(0,   1, 10)
 Y    = np.linspace(0,   1, 10)
@@ -15574,7 +15574,7 @@ ds   = xr.DataArray(data,
                     coords=[('bias_mV', bias), ('X', X), ('Y', Y)],
                     name='LDOS').to_dataset()
 
-# 슬라이더 위젯
+# Slider widget
 bias_slider = pn.widgets.FloatSlider(
     name='Bias (mV)',
     start=float(ds.bias_mV.min()), end=float(ds.bias_mV.max()),
@@ -15591,7 +15591,7 @@ y_slider = pn.widgets.FloatSlider(
     step=float(ds.Y.diff(dim='Y').mean())
 )
 
-# 플롯 함수 정의
+# Define plotting function
 def plot_bias(bias_val):
     da = ds.LDOS.sel(bias_mV=bias_val, method='nearest')
     return da.hvplot.image(
@@ -15616,12 +15616,12 @@ def plot_y(y_val):
         cmap='Viridis'
     ).opts(title=f"Y = {y_val:.2f}")
 
-# pn.bind -> pn.panel 으로 감싸기 (error_policy 생략)
+# Wrap pn.bind -> pn.panel (error_policy omitted)
 bias_pane = pn.panel(pn.bind(plot_bias, bias_val=bias_slider))
 x_pane    = pn.panel(pn.bind(plot_x,    x_val=x_slider))
 y_pane    = pn.panel(pn.bind(plot_y,    y_val=y_slider))
 
-# 레이아웃 구성 및 서빙
+# Assemble layout and serve
 dashboard = pn.Column(
     pn.Row(bias_slider, x_slider, y_slider),
     pn.Tabs(
@@ -15672,32 +15672,32 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import xarray as xr
 
-# seaborn 스타일 설정
+# Set seaborn style
 sns.set_style("whitegrid")
 
-# 1) X, Y 차원을 'pixel'으로 병합 (stack)
+# 1) Merge (stack) the X, Y dimensions into 'pixel'
 ldos_stacked = ds_cluster.LDOS.stack(pixel=("X", "Y"))    # dims: ("pixel", "bias_mV")
 mask_stacked = ds_cluster.ZB_mask.stack(pixel=("X", "Y"))  # dims: ("pixel",)
 
-# 2) pixel별로 ZBP 여부 문자열 카테고리 생성
+# 2) Create a per-pixel ZBP-or-not string category
 category = xr.where(mask_stacked.notnull(), "ZBP", "no_ZBP")  # dims: ("pixel",)
 
-# 3) pandas DataFrame으로 변환
-#   (1) LDOS 데이터: to_series() → reset_index()
+# 3) Convert to a pandas DataFrame
+#   (1) LDOS data: to_series() -> reset_index()
 df_ldos = ldos_stacked.to_series().reset_index()
-#      컬럼 순서: ['bias_mV', 'X', 'Y', 'LDOS']
+#      Column order: ['bias_mV', 'X', 'Y', 'LDOS']
 
-#   (2) category 정보: to_series() → reset_index()
+#   (2) category info: to_series() -> reset_index()
 df_category = category.to_series().reset_index()
-#      컬럼 순서: ['X', 'Y', 'ZB_mask']
+#      Column order: ['X', 'Y', 'ZB_mask']
 df_category = df_category.rename(columns={"ZB_mask": "category"})
 
-# 4) 두 DataFrame을 X, Y 기준으로 병합
+# 4) Merge the two DataFrames on X, Y
 df = pd.merge(df_ldos, df_category, on=["X", "Y"], how="left")
 # df.columns: ['bias_mV', 'X', 'Y', 'LDOS', 'category']
 
-# 5) seaborn relplot으로 "bias_mV vs LDOS" 평균곡선 및 95% CI 그리기
-#    → legend=False 를 주면 hue 범례(오른쪽 범례)가 생성되지 않습니다.
+# 5) Draw the "bias_mV vs LDOS" mean curve and 95% CI with seaborn relplot
+#    -> Passing legend=False prevents the hue legend (right-side legend) from being created.
 g = sns.relplot(
     data=df,
     x="bias_mV",
@@ -15708,26 +15708,26 @@ g = sns.relplot(
     ci= 'sd',
     height=4,
     aspect=1,
-    legend=False         # 자동 생성되는 hue 범례를 끕니다.
+    legend=False         # Turn off the auto-generated hue legend.
 )
 
 g.set_axis_labels("Bias (mV)", "LDOS")
 g.fig.suptitle("averaged LDOS (confidence interval: standard deviation)", y=1.02)
 
-# 6) 축 내부에 하나의 범례만 직접 그리기
-#    → 오른쪽 대신 왼쪽 위에 “SC vs In-Gap” 범례를 넣고 싶다면, 아래와 같이 수동 생성
-ax = g.ax  # relplot 사용 시 단일 축이므로 .ax로 접근 가능합니다.
+# 6) Manually draw only one legend inside the axes
+#    -> If you want the "SC vs In-Gap" legend at the upper left instead of the right, create it manually as below
+ax = g.ax  # Since relplot uses a single axes, it can be accessed via .ax.
 
-# hue 순서(색상)와 텍스트 레이블을 직접 정의합니다.
-# 예: ZBP → "IGS", no_ZBP → "SC"
+# Directly define the hue order (colors) and text labels.
+# e.g. ZBP -> "IGS", no_ZBP -> "SC"
 hue_order = ["no_ZBP", "ZBP"]
-labels    = ["SC", "IGS"]  # 축에 표시할 텍스트
+labels    = ["SC", "IGS"]  # Text to display on the axis
 colors    = [sns.color_palette()[0], sns.color_palette()[1]]  
 
-# 빈 핸들을 만들어서, 실제 색상만 맞춰줄 겁니다.
+# Create empty handles and match only the actual colors.
 handles = [plt.Line2D([], [], color=colors[i], lw=2) for i in range(len(labels))]
 
-# 범례 위치를 축 내부로 설정 (예: upper left)
+# Set the legend position inside the axes (e.g. upper left)
 ax.legend(
     handles    = handles,
     labels     = labels,
@@ -15823,27 +15823,27 @@ ds_opt2[['LDOS
 
 # +
 
-# 1) NumPy 배열 및 좌표 추출
+# 1) Extract NumPy array and coordinates
 data = ds_opt2.LDOS.values
 ys   = ds_opt2.Y.values
 xs   = ds_opt2.X.values
 zs   = ds_opt2.bias_mV.values
 
-# 2) 10개의 bias 슬라이스 인덱스 (0 포함, 등간격)
+# 2) 10 bias slice indices (including 0, evenly spaced)
 slice_idxs = np.linspace(0, len(zs)-1, 7, dtype=int)
 
-# 3) 전역 robust 범위 계산 (2, 98 퍼센타일)
+# 3) Compute global robust range (2, 98 percentile)
 p2, p98 = np.nanpercentile(data, [2, 98])
 p2, p98 = float(p2), float(p98)
 
-# 4) bias 범위에서 sigma 설정 (가우시안 opacity)
+# 4) Set sigma over the bias range (Gaussian opacity)
 max_bias   = float(np.max(np.abs(zs)))
 sigma_bias = max_bias / 3
 
-# 5) Plotly Figure 생성
+# 5) Create Plotly Figure
 fig = go.Figure()
 
-# 6) 각 슬라이스를 평면(surface)으로 추가하며 Gaussian opacity & robust 색상 범위 적용
+# 6) Add each slice as a surface, applying Gaussian opacity & robust color range
 for i, idx in enumerate(slice_idxs):
     z0        = float(zs[idx])
     slice_img = data[:, :, idx]
@@ -15863,7 +15863,7 @@ for i, idx in enumerate(slice_idxs):
         showscale=(i == 0)
     ))
 
-# 7) 레이아웃 세부 조정
+# 7) Fine-tune the layout
 fig.update_layout(
     title="LDOS 3D Stack with Gaussian Opacity & Robust Contrast",
     scene=dict(
@@ -15895,43 +15895,43 @@ else:
 
 
 # +
-# Mayavi를 이용한 3D slice 스태킹 예제 코드
+# Example code for 3D slice stacking using Mayavi
 import numpy as np
 from mayavi import mlab
 
-# 1) xarray 데이터에서 NumPy 배열 및 좌표 추출
+# 1) Extract NumPy array and coordinates from xarray data
 data = ds_opt2.LDOS.values            # shape: (Y, X, bias_mV)
 ys   = ds_opt2.Y.values
 xs   = ds_opt2.X.values
 zs   = ds_opt2.bias_mV.values
 
-# 2) 10개의 bias 슬라이스 인덱스 (0 포함, 등간격)
+# 2) 10 bias slice indices (including 0, evenly spaced)
 slice_idxs = np.linspace(0, len(zs)-1, 10, dtype=int)
 
-# 3) Mayavi Figure 생성
+# 3) Create Mayavi Figure
 mlab.figure(bgcolor=(1,1,1), size=(800, 600))
 
-# 4) 각 슬라이스를 XY 평면에 스태킹
+# 4) Stack each slice on the XY plane
 for idx in slice_idxs:
     z0    = zs[idx]
     slice_img = data[:, :, idx]       # Y×X
-    Xg, Yg = np.meshgrid(xs, ys)      # 그리드 생성
-    # surf: (x, y, z) 평면 위에 scalars 로 컬러맵 적용
+    Xg, Yg = np.meshgrid(xs, ys)      # Create grid
+    # surf: apply colormap via scalars on the (x, y, z) plane
     mlab.surf(
         Xg, Yg,
-        np.full_like(Xg, z0),         # bias 위치를 높이(z)에 사용
+        np.full_like(Xg, z0),         # use the bias position as height (z)
         scalars=slice_img,
         colormap='viridis',
         opacity=0.7
     )
 
-# 5) 축 및 컬러바 옵션
+# 5) Axis and colorbar options
 mlab.axes(
     xlabel='X (m)', ylabel='Y (m)', zlabel='bias (mV)',
     ranges=[xs.min(), xs.max(), ys.min(), ys.max(), zs.min(), zs.max()]
 )
 mlab.colorbar(title='LDOS', orientation='vertical')
-mlab.view(azimuth=45, elevation=60)  # 시점 설정
+mlab.view(azimuth=45, elevation=60)  # Set the view
 mlab.show()
 
 # -
@@ -15943,7 +15943,7 @@ grid_LDOS_SnD_pks=ds_opt2.copy()
 # +
 import matplotlib.pyplot as plt
 
-# 1) 좌표 리스트
+# 1) Coordinate list
 # for 2T 003
 select_coords = [
     (24, 50),
@@ -15955,21 +15955,21 @@ select_coords = [
     (131, 118),
     (145, 99)
 ]
-# 2) Y값 기준으로 위→아래 정렬 및 번호 매기기
+# 2) Sort top-to-bottom by Y value and assign numbers
 sorted_coords = sorted(select_coords, key=lambda yx: yx[0])
 numbers = list(range(1, len(sorted_coords) + 1))
 
-# 3) 그림 생성 및 지도 플롯
+# 3) Create figure and plot map
 fig, ax = plt.subplots(figsize=(6,6))
 grid_LDOS_SnD_pks.LDOS.sel(bias_mV=0).plot(ax=ax)
 
-# 4) 좌표별로 점 찍고 번호 텍스트는 점 위쪽에 배치
+# 4) Plot a point per coordinate and place the number label above the point
 for (y, x), num in zip(sorted_coords, numbers):
-    # 실제 축 좌표값
+    # Actual axis coordinate value
     x_val = grid_LDOS_SnD_pks['X'].isel(X=x).values
     y_val = grid_LDOS_SnD_pks['Y'].isel(Y=y).values
 
-    # 반투명 붉은 점
+    # Semi-transparent red point
     ax.scatter(
         x_val, y_val,
         color='red', alpha=0.5, s=50,
@@ -15977,20 +15977,20 @@ for (y, x), num in zip(sorted_coords, numbers):
     )
     ax.set_aspect('equal', adjustable='box')
     
-    # 번호 텍스트를 점의 위쪽으로 오프셋
+    # Offset the number label above the point
     ax.annotate(
         str(num),
         xy=(x_val, y_val),
-        xytext=(0, 5),            # y축으로 5포인트만큼 위쪽으로 이동
+        xytext=(0, 5),            # Shift 5 points upward along the y-axis
         textcoords='offset points',
-        ha='center', va='bottom', # 중앙 정렬, 텍스트의 하단이 기준점
+        ha='center', va='bottom', # Center-aligned, text bottom as the anchor
         color='white',
         fontsize=12,
         fontweight='bold',
         zorder=11
     )
 
-# 5) 최종 레이아웃
+# 5) Final layout
 ax.set_title('Bias=0 LDOS Map with Selected Points')
 plt.tight_layout()
 plt.show()
@@ -15999,7 +15999,7 @@ plt.show()
 # +
 import matplotlib.pyplot as plt
 
-# 1) 저장할 좌표 리스트
+# 1) List of coordinates to save
 # for 2T 003
 select_coords = [
     (24, 50),
@@ -16013,11 +16013,11 @@ select_coords = [
 ]
 
 
-# 2) 순회하면서 그림과 DataFrame 생성·저장
+# 2) Iterate to create and save the figure and DataFrame
 for idx, (y, x) in enumerate(select_coords, start=1):
     label = f"{idx}_Y{y}X{x}"
     
-    # a) 함수 호출: fig, df 반환
+    # a) Call the function: returns fig, df
     fig, df = plot_region_fitting_result_from_dsfit(
         grid_LDOS_SnD_pks,
         weight_function_show=False,
@@ -16027,16 +16027,16 @@ for idx, (y, x) in enumerate(select_coords, start=1):
         return_fig=True
     )
     
-    # b) SVG로 그림 저장
+    # b) Save the figure as SVG
     fig.savefig(f"{label}.svg", format='svg', bbox_inches='tight')
     
-    # **c) 화면에 그림 출력**
+    # **c) Display the figure on screen**
     plt.show()
     
-    # d) CSV로 DataFrame 저장
+    # d) Save the DataFrame as CSV
     df.to_csv(f"df_{label}.csv", index=True)
     
-    # e) 메모리 해제
+    # e) Free memory
     plt.close(fig)
 
 
@@ -16234,22 +16234,22 @@ ds_crop0= ds_cluster.sel(X= slice(0.55E-7,0.6E-7), Y= slice (2.08E-7,2.13E-7))
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
-# 1) 크롭 영역 경계 (m 단위)
+# 1) Crop region boundary (in meters)
 x0, x1 = 0.55e-7, 0.6e-7
 y0, y1 = 2.08e-7, 2.13e-7
 
-# 2) 데이터 준비
+# 2) Prepare data
 full = ds_cluster.LDOS.sel(bias_mV=0)
 crop = full.sel(X=slice(x0, x1), Y=slice(y0, y1))
 
-# 3) 좌표 배열
+# 3) Coordinate array
 X = full['X'].values
 Y = full['Y'].values
 
 # 4) Figure / Axes
 fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12, 6), constrained_layout=True)
 
-# 5) 전체 영역 imshow (raster)
+# 5) imshow the full region (raster)
 im0 = ax0.imshow(
     full.values,
     extent=(X.min(), X.max(), Y.min(), Y.max()),
@@ -16259,11 +16259,11 @@ im0 = ax0.imshow(
     interpolation='nearest',
     zorder=0
 )
-# 축 고정
+# Fix axis
 ax0.set_xlim(X.min(), X.max())
 ax0.set_ylim(Y.min(), Y.max())
 
-# 6) 붉은 크롭 박스 (zorder=1)
+# 6) Red crop box (zorder=1)
 rect = Rectangle(
     (x0, y0), x1 - x0, y1 - y0,
     fill=False, edgecolor='red', linewidth=2, zorder=1
@@ -16274,7 +16274,7 @@ ax0.set_title('Full LDOS at bias=0 mV')
 ax0.set_xlabel('X [nm]')
 ax0.set_ylabel('Y [nm]')
 
-# 7) 크롭 영역 imshow
+# 7) imshow the crop region
 im1 = ax1.imshow(
     crop.values,
     extent=(x0, x1, y0, y1),
@@ -16287,12 +16287,12 @@ ax1.set_title('Cropped Region')
 ax1.set_xlabel('X [nm]')
 ax1.set_ylabel('Y [nm]')
 
-# 8) 컬러바 (공유)
+# 8) Colorbar (shared)
 cbar = fig.colorbar(im1, ax=(ax0, ax1),
                     orientation='vertical', fraction=0.046, pad=0.04)
 cbar.set_label('LDOS')
 
-# 9) SVG 저장
+# 9) Save as SVG
 fig.savefig('ldos_full_and_cropped_final.svg', format='svg')
 
 plt.show()
@@ -16320,27 +16320,27 @@ def plot_peak_subcell(
     figsize: tuple = (8, 8)
 ):
     """
-    ds의 peak 데이터를 subcell로 분할해 시각화합니다.
-    mode='center'일 때는 0으로부터의 절대값 거리를 색상으로 표현하며,
-    이 경우 컬러바 레이블에 절대값임을 표시합니다.
-    subcell 전체 영역에는 굵은 테두리를 추가합니다.
+    Splits ds's peak data into subcells and visualizes them.
+    When mode='center', the absolute distance from 0 is represented by color,
+    and in that case the colorbar label indicates it is an absolute value.
+    A bold border is added around the entire subcell region.
 
     Returns
     -------
     (fig, ax), (demo_fig, demo_ax)
     """
-    # 1) 변수 선택
+    # 1) Select variable
     mode_map = {
         'center':    'peak_center',
         'width':     'peak_sigma',
         'amplitude': 'peak_amplitude'
     }
     if mode not in mode_map:
-        raise ValueError(f"mode는 {list(mode_map)} 중 하나여야 합니다.")
+        raise ValueError(f"mode must be one of {list(mode_map)}.")
     varname = mode_map[mode]
     raw = ds[varname].values          # (ny, nx, n_peaks)
 
-    # 2) colormap 준비 (기존 로직)
+    # 2) Prepare colormap (existing logic)
     if cmap_name == 'berlin':
         if cmap_name in plt.colormaps():
             cmap = plt.get_cmap(cmap_name)
@@ -16361,7 +16361,7 @@ def plot_peak_subcell(
     else:
         cmap = plt.get_cmap(cmap_name)
 
-    # 3) subcell grid 크기 계산
+    # 3) Compute subcell grid size
     ny, nx, _ = raw.shape
     counts = np.sum(~np.isnan(raw), axis=2)
     m = int(np.nanmax(counts))
@@ -16369,13 +16369,13 @@ def plot_peak_subcell(
     row_sub = col_sub = s
     total_slots = s * s
 
-    # 4) 실제 좌표 & 픽셀 크기
+    # 4) Actual coordinates & pixel size
     x_coords = ds['X'].values
     y_coords = ds['Y'].values
     dx = np.mean(np.diff(x_coords))
     dy = np.mean(np.diff(y_coords))
 
-    # 5) 'center' 모드 처리: 절대값, 컬러바 0 기준
+    # 5) Handle 'center' mode: absolute value, colorbar zero-referenced
     if mode == 'center':
         data = np.abs(raw)
         var_label = f"|{varname}|"
@@ -16385,7 +16385,7 @@ def plot_peak_subcell(
         var_label = varname
         norm = plt.Normalize(np.nanmin(data), np.nanmax(data))
 
-    # 6) 메인 플롯
+    # 6) Main plot
     fig, ax = plt.subplots(figsize=figsize)
     for yi in range(ny):
         for xi in range(nx):
@@ -16406,23 +16406,23 @@ def plot_peak_subcell(
                                      edgecolor=None)
                     ax.add_patch(rect)
                 else:
-                    # ▽ 여기를 hatch 패턴으로 변경
+                    # ▽ Change this to a hatch pattern
                     rect = Rectangle(
                         (x0, y0), w, h,
                         facecolor='none',
                         edgecolor='black',
-                        hatch='xx',    # 여기서 ‘xx’ 대신 '///', 'OO', ‘\\\\’ 등 원하는 패턴
+                        hatch='xx',    # instead of 'xx' here, use a pattern such as '///', 'OO', '\\\\', etc.
                         linewidth=0.5
                     )
                     ax.add_patch(rect)
 
-    # 7) 픽셀 경계선
+    # 7) Pixel boundary lines
     for xi in range(nx+1):
         ax.axvline(x_coords[0]-dx/2 + xi*dx, color='black', lw=0.8)
     for yi in range(ny+1):
         ax.axhline(y_coords[0]-dy/2 + yi*dy, color='black', lw=0.8)
 
-    # → 전체 subcell 영역 테두리
+    # -> Border around the entire subcell region
     border = Rectangle(
         (x_coords[0]-dx/2, y_coords[0]-dy/2),
         nx*dx, ny*dy,
@@ -16431,7 +16431,7 @@ def plot_peak_subcell(
     )
     ax.add_patch(border)
 
-    # 8) 축 레이블 & 틱 포맷터 (nm 단위)
+    # 8) Axis labels & tick formatter (in nm)
     def to_nm(x, pos):
         return f"{x*1e9:.1f}"
     ax.xaxis.set_major_formatter(FuncFormatter(to_nm))
@@ -16444,7 +16444,7 @@ def plot_peak_subcell(
     ax.set_ylabel('Y [nm]')
     ax.set_title(f"{var_label} per Subcell")
 
-    # 9) 컬러바
+    # 9) Colorbar
     sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=ax, orientation='vertical',
@@ -16456,7 +16456,7 @@ def plot_peak_subcell(
 
     plt.tight_layout()
 
-    # 10) 데모 플롯: subcell 인덱스 시각화 (변경 없음)
+    # 10) Demo plot: subcell index visualization (unchanged)
     demo_fig, demo_ax = plt.subplots(figsize=(2, 2))
     for j in range(total_slots):
         r = j // col_sub
@@ -16469,7 +16469,7 @@ def plot_peak_subcell(
             demo_ax.text(x0+0.5/s, y0+0.5/s, str(j),
                          ha='center', va='center', fontsize=12)
         else:
-            # 굵은 hatch demo
+            # Bold hatch demo
             demo_ax.add_patch(
                 Rectangle((x0, y0), 1/s, 1/s,
                           facecolor='none',
@@ -16493,7 +16493,7 @@ def plot_peak_subcell(
 
 # ## Choose one of 'center'|'width'|'amplitude' to plot, with color scaled accordingly 
 
-# 기본 호출: peak_center, custom cmap, 8″×8″
+# Basic call: peak_center, custom cmap, 8″x8″
 (main_fig, main_ax), (demo_fig, demo_ax) = plot_peak_subcell(
     ds_crop0,
     mode='center',                         # 'center'|'width'|'amplitude'
@@ -16506,8 +16506,8 @@ def plot_peak_subcell(
     #cmap_name='Greens_r',
     figsize=(8, 8)
 )
-plt.show()  # 두 개의 Figure 가 차례로 나타납니다
-# 2) SVG로 저장
+plt.show()  # The two Figures appear in sequence
+# 2) Save as SVG
 main_fig.savefig('peak_center_subcell.svg', format='svg')
 demo_fig.savefig('subcell_demo.svg', format='svg')
 
@@ -16580,7 +16580,7 @@ def interactive_plot_peak_subcell_clusters(ds: xr.Dataset, figsize=(8,8)):
        remove outer margins, show legend + Save SVG button.
     """
     def on_var(var):
-        # --- 반드시 전역변수에 저장해야 이후 on_labels 에서 사용됩니다 ---
+        # --- Must be saved to a global variable to be used later in on_labels ---
         global selected_cluster_var
         selected_cluster_var = var
         select_labels_in_cluster_interactive(ds, callback=on_labels)
@@ -16620,16 +16620,16 @@ def interactive_plot_peak_subcell_clusters(ds: xr.Dataset, figsize=(8,8)):
                     w, h = dx/s, dy/s
 
                     if j < len(act):
-                        # 활성된 peak
+                        # Active peak
                         pk = act[j]
                         lab = int(clust[yi,xi,pk])
                         if lab in chosen_labels:
-                            # 선택된 클러스터 → 컬러 채움
+                            # Selected cluster -> fill with color
                             face = cmap(lab2idx[lab])
                             rect = Rectangle((x0,y0), w, h,
                                              facecolor=face, edgecolor=None)
                         else:
-                            # 선택되지 않은 또는 noise(-1) → hatch 처리
+                            # Not selected or noise(-1) -> apply hatch
                             rect = Rectangle((x0,y0), w, h,
                                              facecolor='none',
                                              edgecolor='black',
@@ -16638,7 +16638,7 @@ def interactive_plot_peak_subcell_clusters(ds: xr.Dataset, figsize=(8,8)):
                         ax.add_patch(rect)
 
                     else:
-                        # 빈 슬롯 → hatch 처리
+                        # Empty slot -> apply hatch
                         rect = Rectangle((x0,y0), w, h,
                                          facecolor='none',
                                          edgecolor='black',
@@ -17216,29 +17216,29 @@ def plot_fitting_results_grid(
 # +
 import matplotlib.pyplot as plt
 
-# 1) 필요한 함수들(위에서 정의한 두 함수)를 이미 불러왔다고 가정합니다.
+# 1) Assumes the required functions (the two defined above) are already loaded.
 
-# 2) 그리드 전체에 “no‐label” 버전 피팅 결과를 임베드
+# 2) Embed the "no-label" version fitting result across the whole grid
 fig, axes, fit_dfs = plot_fitting_results_grid(
-    ds_cluster=ds_crop0,                  # 사용하실 Dataset
-    figsize_per_cell=(2.5, 2.5),          # 셀 하나당 크기 (inch)
-    # plot_region_fitting_result_from_dsfit_no_label 에 전달할 옵션들
+    ds_cluster=ds_crop0,                  # Dataset to use
+    figsize_per_cell=(2.5, 2.5),          # Size per cell (inch)
+    # Options to pass to plot_region_fitting_result_from_dsfit_no_label
     weight_function_show=False,
     use_zb_mask=True,
     zb_mask_key='ZB_mask',
     show_shade=True,
-    model_type=None,                      # None 이면 ds_fit['model_type'] 사용
+    model_type=None,                      # If None, uses ds_fit['model_type']
     allowed_models=['Lorentzian','Gaussian','Voigt']
 )
 
-# 3) 화면에 표시
+# 3) Display on screen
 plt.show()
 
-# 4) (선택) SVG 로 저장
+# 4) (optional) Save as SVG
 fig.savefig('fits_no_labels_grid.svg', format='svg')
 
-# 5) (선택) 특정 픽셀의 DataFrame 확인
-# 예: Y=3, X=4 픽셀
+# 5) (optional) Check the DataFrame for a specific pixel
+# e.g. pixel Y=3, X=4
 #df_3_4 = fit_dfs[(3,4)]
 #print(df_3_4.head())
 
@@ -17263,7 +17263,7 @@ from lmfit.models import LorentzianModel, GaussianModel, VoigtModel, ConstantMod
 from functools import reduce
 from matplotlib.cm import get_cmap
 
-# ── 인터랙티브 헬퍼 1: 어떤 data_var가 클러스터 레이블인지 선택 ──
+# ── Interactive helper 1: select which data_var is the cluster label ──
 selected_cluster_var_global = None
 def select_cluster_data_var_interactive(ds, callback=None):
     """
@@ -17290,7 +17290,7 @@ def select_cluster_data_var_interactive(ds, callback=None):
     display(widgets.VBox([selector, btn, out]))
 
 
-# ── 인터랙티브 헬퍼 2: 어떤 레이블(들)을 하이라이트할지 선택 ──
+# ── Interactive helper 2: select which label(s) to highlight ──
 selected_cluster_labels_global = None
 def select_labels_in_cluster_interactive(ds, callback=None):
     """
@@ -17318,7 +17318,7 @@ def select_labels_in_cluster_interactive(ds, callback=None):
     display(widgets.VBox([selector, btn, out]))
 
 
-# ── 픽셀 단위 fitting plot (레이블·틱 없이) ──
+# ── Per-pixel fitting plot (no labels/ticks) ──
 def plot_region_fitting_result_from_dsfit_no_label(
     ds_fit: xr.Dataset,
     y_idx:int, x_idx:int,
@@ -17335,11 +17335,11 @@ def plot_region_fitting_result_from_dsfit_no_label(
     Single‐pixel fit plot without titles/axes/ticks.
     Only fill under those peak‐components whose cluster label ∈ highlight_labels.
     """
-    # 1) 데이터 꺼내기
+    # 1) Extract data
     bias = ds_fit['bias_mV'].values
     ldos = ds_fit['LDOS'].isel(Y=y_idx,X=x_idx).values
 
-    # 2) 모델 클래스 선택
+    # 2) Select model class
     if model_type is None:
         chosen = ds_fit['model_type'].isel(Y=y_idx,X=x_idx).item().capitalize()
     else:
@@ -17350,7 +17350,7 @@ def plot_region_fitting_result_from_dsfit_no_label(
                   'Gaussian':  GaussianModel,
                   'Voigt':      VoigtModel}[chosen]
 
-    # 3) peak 파라미터 가져오기
+    # 3) Get peak parameters
     centers = ds_fit['peak_center'].isel(Y=y_idx,X=x_idx).values
     amps    = ds_fit['peak_amplitude'].isel(Y=y_idx,X=x_idx).values
     sigmas  = ds_fit['peak_sigma'].isel(Y=y_idx,X=x_idx).values
@@ -17359,7 +17359,7 @@ def plot_region_fitting_result_from_dsfit_no_label(
         if not (np.isnan(c) or np.isnan(a) or np.isnan(s))
     ]
 
-    # 4) composite 모델 구성
+    # 4) Build composite model
     models = []
     if 'background_value' in ds_fit:
         models.append(ConstantModel(prefix='bkg_'))
@@ -17375,17 +17375,17 @@ def plot_region_fitting_result_from_dsfit_no_label(
         params[f'peak{i}_amplitude'].set(value=amps[i])
         params[f'peak{i}_sigma'].set(value=sigmas[i])
 
-    # 5) fitting 결과 계산
+    # 5) Compute fitting result
     best_fit   = comp.eval(params=params, x=bias)
     comps_vals = comp.eval_components(params=params, x=bias)
 
-    # 6) (선택) weight-function convolution
+    # 6) (optional) weight-function convolution
     if weight_function_show:
         wsig = ds_fit.attrs.get('weight_sigma',1.0)
         wfunc = np.exp(-bias**2/(2*wsig**2))
         conv  = np.convolve(best_fit, wfunc, mode='same')/np.sum(wfunc)
 
-    # 7) 기본 회색 곡선만 그리기
+    # 7) Draw only the basic gray curve
     fig, ax = plt.subplots(figsize=(4,3))
     ax.plot(bias, ldos,     color='lightgray', linestyle=':', linewidth=1, zorder=1)
     ax.plot(bias, best_fit, color='gray',       linestyle='-', linewidth=3, zorder=2)
@@ -17411,14 +17411,14 @@ def plot_region_fitting_result_from_dsfit_no_label(
                     zorder=0
                 )
 
-    # 9) 제목·레이블·틱 제거, spine만 남기기
+    # 9) Remove title/labels/ticks, keep only the spines
     ax.set_xticks([]); ax.set_yticks([])
     for s in ax.spines.values():
         s.set_visible(True)
 
     plt.tight_layout()
 
-    # 10) DataFrame 구성
+    # 10) Build DataFrame
     data = {'LDOS': ldos, 'best_fit': best_fit}
     for name, arr in comps_vals.items():
         if name!='bkg_':
@@ -17432,7 +17432,7 @@ def plot_region_fitting_result_from_dsfit_no_label(
     return (fig, df) if return_fig else df
 
 
-# ── 픽셀별 그림을 격자에 임베드 ──
+# ── Embed the per-pixel figure into the grid ──
 def plot_fitting_results_grid(
     ds_cluster: xr.Dataset,
     figsize_per_cell=(2.5,2.5),
@@ -17481,12 +17481,12 @@ def plot_fitting_results_grid(
     return fig, axes, fit_dfs
 
 
-# ── 실행 오케스트레이터 ──
+# ── Execution orchestrator ──
 def interactive_cluster_plot_and_grid(
     ds_cluster, figsize_per_cell=(2.5,2.5), **plot_kwargs
 ):
     """
-    1) 클러스터 변수 선택 → 2) 레이블 선택 → 3) 그리기 → 4) SVG 저장 버튼
+    1) Select cluster variable -> 2) Select label -> 3) Draw -> 4) SVG save button
     """
     def on_labels(lbls):
         fig, axes, dfs = plot_fitting_results_grid(
@@ -17497,7 +17497,7 @@ def interactive_cluster_plot_and_grid(
         )
         plt.show()
 
-        # ── 여기서 SVG 저장 버튼 추가 ──
+        # ── Add the SVG save button here ──
         save_btn = widgets.Button(
             description='Save as SVG',
             button_style='success'
@@ -17522,7 +17522,7 @@ def interactive_cluster_plot_and_grid(
         ds_cluster, callback=on_cluster)
 
 
-# ── 사용 예시 ──
+# ── Usage example ──
 interactive_cluster_plot_and_grid(
     ds_crop0,
     figsize_per_cell=(2.5,2.5),
@@ -18119,7 +18119,7 @@ grid_LDOS_SnD_pks_Lorentzian_fit.fit_converged.plot(ax=axes[0], cmap='viridis')
 #  r_squared (cmap: plasma)
 grid_LDOS_SnD_pks_Lorentzian_fit.r_squared.plot(ax=axes[1], cmap='plasma')
 
-#  bias_mV = 0에서의 fit_result (cmap: inferno)
+#  fit_result at bias_mV = 0 (cmap: inferno)
 bias_mV_index = (grid_LDOS_SnD_pks_Lorentzian_fit.bias_mV == 0).argmax().item()
 grid_LDOS_SnD_pks_Lorentzian_fit.fit_result.isel(bias_mV=bias_mV_index).plot(ax=axes[2], cmap='inferno')
 
@@ -19228,15 +19228,15 @@ from matplotlib.colors import Normalize
 import matplotlib.markers as mmarkers
 
 
-# peak_prominences의 최소값과 최대값 계산
+# Compute min and max of peak_prominences
 min_prominence = df['peak_prominences'].min()
 max_prominence = df['peak_prominences'].max()
 
-# peak_widths의 최소값과 최대값 계산
+# Compute min and max of peak_widths
 min_width = df['peak_widths'].min()
 max_width = df['peak_widths'].max()
 
-# Normalize 객체 생성
+# Create Normalize object
 norm_color = Normalize(vmin=min_prominence, vmax=max_prominence)
 norm_size = Normalize(vmin=min_width, vmax=max_width)
 
@@ -19245,45 +19245,45 @@ marker_symbols = ['o', 'o', '+', 'D', 'd', 's', '8', 'x']
 num_clusters = df['cluster'].nunique()
 cluster_to_symbol = {i: marker_symbols[i % len(marker_symbols)] for i in range(num_clusters)}
 
-# scatterplot 그리기
+# Draw scatterplot
 def scatter_with_colorbar(x, y, peak_prominences, peak_widths, cluster, **kwargs):
     ax = plt.gca()
-    sizes = norm_size(peak_widths) * 300  # 크기 조절 (300은 최대 크기, 필요에 따라 조정)
-    marker = cluster_to_symbol[cluster.iloc[0]]  # 각 subplot은 하나의 cluster만 포함하므로 첫 번째 값 사용
+    sizes = norm_size(peak_widths) * 300  # Scale size (300 is the max size, adjust as needed)
+    marker = cluster_to_symbol[cluster.iloc[0]]  # Since each subplot contains only one cluster, use the first value
     scatter = ax.scatter(x, y, c=peak_prominences, s=sizes, norm=norm_color, cmap='viridis', marker=marker, alpha =0.2)
     ax.grid('on')
     return scatter
 
 
-# FacetGrid 생성 및 scatterplot 그리기
+# Create FacetGrid and draw scatterplot
 g = sns.FacetGrid(data=df, col='cluster', height=3, col_wrap=4)
 g.map(scatter_with_colorbar, 'bias_mV', 'peak_heights', 'peak_prominences', 'peak_widths', 'cluster')
 g.set_titles(col_template='Cluster {col_name}')
 
-# 그래프의 레이아웃 조정
+# Adjust the plot layout
 plt.tight_layout()
 
-# 컬러바와 범례를 위한 공간 확보
+# Reserve space for the colorbar and legend
 g.fig.subplots_adjust(bottom=0.2, right=0.85)
 
-# 컬러바 추가 (가로 방향)
+# Add colorbar (horizontal)
 cbar_ax = g.fig.add_axes([0.10, 0.05, 0.50, 0.02])  # [left, bottom, width, height]
 cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm_color, cmap='viridis'), 
                     cax=cbar_ax, orientation='horizontal', label='Peak Prominences')
 
-# 마커 심볼에 대한 범례 추가 (가로 방향)
+# Add legend for marker symbols (horizontal)
 legend_elements = [plt.Line2D([0], [0], marker=marker, color='w', label=f'Cluster {cluster}',
                               markerfacecolor='gray', markersize=10)
                    for cluster, marker in cluster_to_symbol.items()]
 
-# 범례를 위한 새로운 axes 생성
+# Create a new axes for the legend
 legend_ax = g.fig.add_axes([0.64, -0.08, 0.20, 0.02])  # [left, bottom, width, height]
-legend_ax.axis('off')  # 축 숨기기
+legend_ax.axis('off')  # Hide axis
 
-# 범례 추가
+# Add legend
 legend = legend_ax.legend(handles=legend_elements, loc='center', ncol=2, mode='expand', 
                           borderaxespad=0., title='Cluster Markers')
-legend._loc = 3  # 범례 위치 조정 (하단 가운데)
+legend._loc = 3  # Adjust legend position (bottom center)
 
 plt.show()
 
@@ -19295,20 +19295,20 @@ from matplotlib.colors import Normalize
 import matplotlib.markers as mmarkers
 
 
-# peak_prominences의 최소값과 최대값 계산
+# Compute min and max of peak_prominences
 min_prominence = df['peak_prominences'].min()
 max_prominence = df['peak_prominences'].max()
 
-# peak_height의 최소값과 최대값 계산
+# Compute min and max of peak_height
 min_height = df['peak_heights'].min()
 max_height = df['peak_heights'].max()
 
 
-# peak_widths의 최소값과 최대값 계산
+# Compute min and max of peak_widths
 min_width = df['peak_widths'].min()
 max_width = df['peak_widths'].max()
 
-# Normalize 객체 생성
+# Create Normalize object
 #norm_color = Normalize(vmin=min_prominence, vmax=max_prominence)
 norm_color = Normalize(vmin=min_height, vmax=max_height)
 norm_size = Normalize(vmin=min_width, vmax=max_width)
@@ -19318,45 +19318,45 @@ marker_symbols = ['o', 'o', '+', 'D', 'd', 's', '8', 'x']
 num_clusters = df['cluster'].nunique()
 cluster_to_symbol = {i: marker_symbols[i % len(marker_symbols)] for i in range(num_clusters)}
 
-# scatterplot 그리기
+# Draw scatterplot
 def scatter_with_colorbar(x, y, peak_heights, peak_widths, cluster, **kwargs):
     ax = plt.gca()
-    sizes = norm_size(peak_widths) * 300  # 크기 조절 (300은 최대 크기, 필요에 따라 조정)
-    marker = cluster_to_symbol[cluster.iloc[0]]  # 각 subplot은 하나의 cluster만 포함하므로 첫 번째 값 사용
+    sizes = norm_size(peak_widths) * 300  # Scale size (300 is the max size, adjust as needed)
+    marker = cluster_to_symbol[cluster.iloc[0]]  # Since each subplot contains only one cluster, use the first value
     scatter = ax.scatter(x, y, c=peak_heights, s=sizes, norm=norm_color, cmap='viridis', marker=marker, alpha =0.1)
     ax.grid('on')
     return scatter
 
 
-# FacetGrid 생성 및 scatterplot 그리기
+# Create FacetGrid and draw scatterplot
 g = sns.FacetGrid(data=df, col='cluster', height=3, col_wrap=4)
 g.map(scatter_with_colorbar, 'bias_mV', 'peak_prominences', 'peak_heights','peak_widths', 'cluster')
 g.set_titles(col_template='Cluster {col_name}')
 
-# 그래프의 레이아웃 조정
+# Adjust the plot layout
 plt.tight_layout()
 
-# 컬러바와 범례를 위한 공간 확보
+# Reserve space for the colorbar and legend
 g.fig.subplots_adjust(bottom=0.2, right=0.85)
 
-# 컬러바 추가 (가로 방향)
+# Add colorbar (horizontal)
 cbar_ax = g.fig.add_axes([0.10, 0.05, 0.50, 0.02])  # [left, bottom, width, height]
 cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm_color, cmap='viridis'), 
                     cax=cbar_ax, orientation='horizontal', label='Peak heights')
 
-# 마커 심볼에 대한 범례 추가 (가로 방향)
+# Add legend for marker symbols (horizontal)
 legend_elements = [plt.Line2D([0], [0], marker=marker, color='w', label=f'Cluster {cluster}',
                               markerfacecolor='gray', markersize=10)
                    for cluster, marker in cluster_to_symbol.items()]
 
-# 범례를 위한 새로운 axes 생성
+# Create a new axes for the legend
 legend_ax = g.fig.add_axes([0.64, -0.08, 0.20, 0.02])  # [left, bottom, width, height]
-legend_ax.axis('off')  # 축 숨기기
+legend_ax.axis('off')  # Hide axis
 
-# 범례 추가
+# Add legend
 legend = legend_ax.legend(handles=legend_elements, loc='center', ncol=2, mode='expand', 
                           borderaxespad=0., title='Cluster Markers')
-legend._loc = 3  # 범례 위치 조정 (하단 가운데)
+legend._loc = 3  # Adjust legend position (bottom center)
 
 plt.show()
 
@@ -19440,33 +19440,33 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.neighbors import NearestNeighbors
 
-# 데이터 불러오기 (이미 df로 로드되어 있다고 가정)
+# Load data (assumes already loaded as df)
 df = grid_LDOS_pks_df_pks
 
-# 사용할 열 선택
+# Select columns to use
 columns_to_use = ['Y','X', 'peak','bias_mV', 'peak_heights', 'peak_prominences', 'peak_widths']
 
-# 선택한 열만 추출
+# Extract only the selected columns
 X = df[columns_to_use]
 
-# 데이터 정규화
+# Normalize data
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-# KMeans 클러스터링 수행
+# Perform KMeans clustering
 n_clusters = 6
 kmeans = KMeans(n_clusters=n_clusters, random_state=42)
 cluster_labels = kmeans.fit_predict(X_scaled)
 
-# 결과를 원본 데이터프레임에 추가
+# Add results to the original DataFrame
 df['new_cluster'] = cluster_labels
 
 
-# 클러스터별 샘플 수 확인
+# Check sample count per cluster
 print("\nSample count per cluster:")
 print(df['new_cluster'].value_counts().sort_index())
 
-# (선택적) KNN을 사용한 클러스터 중심 찾기
+# (optional) Find cluster centers using KNN
 nn = NearestNeighbors(n_neighbors=1)
 nn.fit(X_scaled)
 cluster_centers = kmeans.cluster_centers_
@@ -19517,17 +19517,17 @@ df
 
 # +
 
-# x, y 값이 같은 그룹 내에서 peak bias 간격 계산
+# Compute peak bias spacing within groups sharing the same x, y values
 df = df.sort_values(['X', 'Y', 'bias_mV'])
 df['pk_distance'] = df.groupby(['X', 'Y'])['bias_mV'].diff()
 
-# 각 (X, Y) 그룹의 마지막 행에 np.nan 할당
+# Assign np.nan to the last row of each (X, Y) group
 df.loc[df.groupby(['X', 'Y'])['bias_mV'].idxmax(), 'pk_distance'] = np.nan
 
-# cluster별로 kde plot 생성
+# Create a KDE plot per cluster
 g = sns.FacetGrid(df, col="cluster", col_wrap=4, height=3)
 g.map(sns.kdeplot, "pk_distance", shade=True)
-# 각 서브플롯에 그리드 추가
+# Add grid to each subplot
 for ax in g.axes.flat:
     ax.grid(True)
 
@@ -20307,9 +20307,9 @@ bound_box = hv.streams.BoundsXY(source = bbox_points,
 dmap.opts()*bbox_points
 
 
-## hv.DynamicMap( 뒤에는 function 이 와야함), streams  로 해당 영역을 지정.( or 함수의 입력정보 지정) 
-# averaged curve 를 그리기 위해서 해당영역을  xr  에서 average  해야함.. 
-# curve 의 area 로 error bar도 같이 그릴것.. 
+## hv.DynamicMap( must be followed by a function), specify that region via streams (or specify the function's input info) 
+# To draw the averaged curve, that region must be averaged in xr.. 
+# Also draw the error bar as the area of the curve.. 
 # -
 
 bbox_1_BoundsXY = bound_box
@@ -20336,38 +20336,38 @@ import seaborn as sns
 from matplotlib.patches import Rectangle
 
 def plot_ldos_with_bboxes(grid_LDOS, bbox_list, slicing_bias_mV):
-    # 그래프 설정
+    # Configure plot
     fig = plt.figure(figsize=(15, 6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
     
-    # LDOS 이미지 그리기
+    # Draw LDOS image
     ldos_slice = grid_LDOS.LDOS.sel(bias_mV=slicing_bias_mV, method = 'nearest')
     im = ax1.imshow(ldos_slice, extent=[grid_LDOS.X.min(), grid_LDOS.X.max(), 
                                         grid_LDOS.Y.min(), grid_LDOS.Y.max()],
                     origin='lower', aspect='equal')
     plt.colorbar(im, ax=ax1, label='LDOS')
     
-    # 색상 설정
+    # Set colors
     colors = plt.cm.rainbow(np.linspace(0, 1, len(bbox_list)))
     
-    # bbox 그리기 및 평균 LDOS 계산
+    # Draw bbox and compute average LDOS
     for i, (bbox, color) in enumerate(zip(bbox_list, colors), 1):
         x, y, w, h = bbox.bounds
         rect = Rectangle((x, y), w-x, h-y, fill=False, edgecolor=color, linewidth=2)
         ax1.add_patch(rect)
         ax1.text(x, y, str(i), color=color, fontweight='bold')
         
-        # bbox 내 평균 LDOS 계산
+        # Compute average LDOS within bbox
         mask = ((grid_LDOS.X >= x) & (grid_LDOS.X <= w) & 
                 (grid_LDOS.Y >= y) & (grid_LDOS.Y <= h))
         avg_ldos = grid_LDOS.LDOS.where(mask)
         
-        # 평균 LDOS 선 그래프
+        # Average LDOS line plot
         sns.lineplot(data=avg_ldos.to_dataframe(), x='bias_mV', y='LDOS', ax=ax2, 
                      label=f'bbox {i}', color=color)
     
-    # 그래프 설정
+    # Configure plot
     ax1.set_title(f'LDOS at bias_mV = {slicing_bias_mV}')
     ax1.set_xlabel('X (m)')
     ax1.set_ylabel('Y (m)')
@@ -20380,7 +20380,7 @@ def plot_ldos_with_bboxes(grid_LDOS, bbox_list, slicing_bias_mV):
     plt.tight_layout()
     plt.show()
 
-# 함수 사용 예시
+# Function usage example
 # plot_ldos_with_bboxes(grid_LDOS, bbox_list, slicing_bias_mV=0)
 
 
@@ -20442,7 +20442,7 @@ pts_xr = xr.Dataset.from_dataframe(pts)
 pts_xr
 
 # +
-# lasso selection avg  실패 
+# lasso selection avg failed 
 # -
 
 #grid_LDOS
@@ -20517,48 +20517,48 @@ from matplotlib.patches import Polygon
 import numpy as np
 
 def plot_ldos_with_lassos(grid_LDOS, lasso_list, slicing_bias_mV):
-    # 그래프 설정
+    # Configure plot
     fig = plt.figure(figsize=(15, 6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
     
-    # LDOS 이미지 그리기
+    # Draw LDOS image
     ldos_slice = grid_LDOS.LDOS.sel(bias_mV=slicing_bias_mV, method = 'nearest')
     im = ax1.imshow(ldos_slice, extent=[grid_LDOS.X.min(), grid_LDOS.X.max(), 
                                         grid_LDOS.Y.min(), grid_LDOS.Y.max()],
                     origin='lower', aspect='equal')
     plt.colorbar(im, ax=ax1, label='LDOS')
     
-    # 색상 설정
+    # Set colors
     colors = plt.cm.rainbow(np.linspace(0, 1, len(lasso_list)))
     
-    # lasso 그리기 및 평균 LDOS 계산
+    # Draw lasso and compute average LDOS
     for i, (lasso, color) in enumerate(zip(lasso_list, colors), 1):
         lasso_x = lasso.X.values
         lasso_y = lasso.Y.values
         
-        # 데이터가 있는 좌표 인덱스 구하기
+        # Get coordinate indices where data exists
         valid_idx = ~np.isnan(lasso.LDOS.values)
         valid_x, valid_y = np.where(valid_idx)
         
-        # 데이터가 있는 좌표 값 추출
+        # Extract coordinate values where data exists
         lasso_coords = np.column_stack((lasso.X.values[valid_x], lasso.Y.values[valid_y]))
         
         polygon = Polygon(lasso_coords, edgecolor=color, facecolor='none', linewidth=2)
         ax1.add_patch(polygon)
         ax1.text(lasso_x[0], lasso_y[0], str(i), color=color, fontweight='bold')
         """
-        # lasso 내 평균 LDOS 계산
+        # Compute average LDOS within lasso
         x_coords = grid_LDOS.LDOS.coords['X'].values
         y_coords = grid_LDOS.LDOS.coords['Y'].values
         mask = np.isin(x_coords, lasso_x) & np.isin(y_coords, lasso_y)
         avg_ldos = grid_LDOS.LDOS.where(mask)
         """
-        # 평균 LDOS 선 그래프
+        # Average LDOS line plot
         sns.lineplot(data=lasso.to_dataframe(), x='bias_mV', y='LDOS', ax=ax2, 
                      label=f'lasso {i}', color=color)
     
-    # 그래프 설정
+    # Configure plot
     ax1.set_title(f'LDOS at bias_mV = {slicing_bias_mV}')
     ax1.set_xlabel('X (m)')
     ax1.set_ylabel('Y (m)')
@@ -20571,7 +20571,7 @@ def plot_ldos_with_lassos(grid_LDOS, lasso_list, slicing_bias_mV):
     plt.tight_layout()
     plt.show()
 
-# 함수 사용 예시
+# Function usage example
 # lasso_list = [lasso_v1, lasso_v2, lasso_v3, lasso_v4, lasso_v5]
 # plot_ldos_with_lassos(grid_LDOS, lasso_list, slicing_bias_mV=0)
 
@@ -20800,34 +20800,34 @@ from sklearn.cluster import DBSCAN
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-# 데이터 준비
+# Prepare data
 data = df[['X', 'Y', 'bias_mV']].values
 
-# DBSCAN 파라미터 설정
-eps = 0.01 # 데이터 스케일에 맞게 조정
-min_samples = 5  # 노이즈와 클러스터를 구분하는 역할
+# Set DBSCAN parameters
+eps = 0.01 # Adjust to match the data scale
+min_samples = 5  # Role of distinguishing noise from clusters
 
-# DBSCAN 실행
+# Run DBSCAN
 dbscan = DBSCAN(eps=eps, min_samples=min_samples).fit(data)
 labels = dbscan.labels_
 
 # +
-# 데이터 준비
+# Prepare data
 df['label'] = labels
 
-# 인터렉티브 3D 산점도 플롯
+# Interactive 3D scatter plot
 fig = px.scatter_3d(df, x='X', y='Y', z='bias_mV', color='label',
                     color_continuous_scale='Viridis', opacity=0.05,
                     hover_name='label', hover_data=['X', 'Y', 'bias_mV'])
 
-# 축 레이블 설정
+# Set axis labels
 fig.update_layout(scene=dict(
                     xaxis_title='X',
                     yaxis_title='Y',
                     zaxis_title='bias_mV'),
                   width=500, height=500)
 
-# 노이즈 데이터 포인트 별도 표시
+# Display noise data points separately
 noise_points = df[df['label'] == -1]
 fig.add_trace(go.Scatter3d(x=noise_points['X'], y=noise_points['Y'], z=noise_points['bias_mV'],
                            mode='markers', marker=dict(color='black', size=1, symbol='x'),
@@ -20932,31 +20932,31 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 def create_gapmap_by_max_LDOS(grid_LDOS_pks):
-    # bias_mV의 양수와 음수 부분 나누기
+    # Split into positive and negative parts of bias_mV
     bias_negative = grid_LDOS_pks.bias_mV < 0
     bias_positive = grid_LDOS_pks.bias_mV > 0
 
-    # LDOS_smoothed_pks 값 중 양수와 음수 부분에서 가장 큰 값의 인덱스 찾기
+    # Find the index of the largest value in the positive and negative parts of LDOS_smoothed_pks
     ldos_neg = grid_LDOS_pks.LDOS_smoothed_pks.isel(bias_mV=bias_negative)
     ldos_pos = grid_LDOS_pks.LDOS_smoothed_pks.isel(bias_mV=bias_positive)
 
-    # 각 위치별로 최대값의 인덱스를 찾고, 해당 bias_mV 값 추출
+    # For each position, find the index of the maximum value and extract the corresponding bias_mV value
     cohpk_0Neg = ldos_neg.idxmax(dim='bias_mV')
     cohpk_0Pos = ldos_pos.idxmax(dim='bias_mV')
 
-    # Gapmap 채널 생성 (두 값의 차이)
+    # Create Gapmap channel (difference between the two values)
     gapmap = cohpk_0Pos - cohpk_0Neg
 
-    # 새로운 데이터셋 생성
+    # Create a new dataset
     new_ds = xr.Dataset({
         'cohpk_0Neg': cohpk_0Neg,
         'cohpk_0Pos': cohpk_0Pos,
         'gapmap': gapmap
     })
 
-    # 새로운 채널들을 원래 데이터셋에 추가
+    # Add the new channels to the original dataset
     combined_ds = grid_LDOS_pks.merge(new_ds)
-    #mask 추가 
+    #Add mask 
     
     # Plotting with seaborn
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
@@ -20975,7 +20975,7 @@ def create_gapmap_by_max_LDOS(grid_LDOS_pks):
 
     return combined_ds
 
-# 사용 예제
+# Usage example
 # grid_LDOS_pks = xr.open_dataset('path_to_your_dataset.nc')
 gapmap_xr = create_gapmap(grid_LDOS_pks)
 print(gapmap_xr)
@@ -21246,15 +21246,15 @@ from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 data = grid_LDOS_pks_df
-# PCA 수행 (3개의 주성분을 추출)
+# Perform PCA (extract 3 principal components)
 pca = PCA(n_components=3)
 principal_components = pca.fit_transform(data)
 
-# PCA 결과를 데이터 프레임으로 변환
+# Convert PCA results to a DataFrame
 pca_df = pd.DataFrame(data=principal_components, columns=['PC1', 'PC2', 'PC3'])
 import plotly.graph_objs as go
 
-# 3D 산점도 생성
+# Create 3D scatter plot
 scatter = go.Scatter3d(
     x=pca_df['PC1'],
     y=pca_df['PC2'],
@@ -21267,7 +21267,7 @@ scatter = go.Scatter3d(
     )
 )
 
-# 레이아웃 설정
+# Configure layout
 layout = go.Layout(
     scene=dict(
         xaxis=dict(title='Principal Component 1'),
@@ -21277,10 +21277,10 @@ layout = go.Layout(
     title='3D PCA Visualization'
 )
 
-# 그래프 객체 생성
+# Create graph object
 fig = go.Figure(data=[scatter], layout=layout)
 
-# 그래프 출력
+# Display graph
 fig.show()
 # -
 
